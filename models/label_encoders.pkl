@@ -1,0 +1,4 @@
+label_encoders = {
+    'Player': LabelEncoder().fit(['Kevin Durant', 'LeBron James', 'Stephen Curry']),
+    'Opponent_Team': LabelEncoder().fit(['Brooklyn Nets', 'Golden State Warriors', 'Los Angeles Lakers'])
+}

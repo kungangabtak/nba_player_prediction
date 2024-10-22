@@ -1,0 +1,6 @@
+# Training the model
+xgb_reg = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, random_state=42)
+xgb_reg.fit(X_train, y_train)
+
+# Saving the model
+joblib.dump(xgb_reg, 'models/XGBoostRegressor.pkl')
