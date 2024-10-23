@@ -4,6 +4,7 @@ from src import utils, model_training, data_collection, feature_engineering, dat
 import pandas as pd
 import logging
 import time
+from nba_api.stats.static import teams
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,8 +18,18 @@ def main():
         logging.error("No players retrieved. Exiting the program.")
         return
     
-    all_data = pd.DataFrame()
-    skipped_players = []
+    # Verify the available columns and unique team abbreviations
+    logging.info(f"Available columns in players DataFrame: {players.columns.tolist()}")
+    
+    if 'TEAM_ABBREVIATION' not in players.columns:
+        logging.error("Column 'TEAM_ABBREVIATION' not found in players DataFrame.")
+        logging.info("Available team abbreviations:")
+        for team in teams.get_teams():
+            logging.info(f"{team['abbreviation']} - {team['full_name']}")
+        return
+    
+    unique_teams = players['TEAM_ABBREVIATION'].unique()
+    logging.info(f"Unique TEAM_ABBREVIATION values: {unique_teams}")
     
     # Specify the two teams you want to analyze
     teams_to_include = ['LAL', 'BOS']  # Example: Los Angeles Lakers and Boston Celtics
@@ -27,6 +38,13 @@ def main():
     # Filter players belonging to the specified teams
     players_filtered = players[players['TEAM_ABBREVIATION'].isin(teams_to_include)]
     logging.info(f"Number of players after filtering: {len(players_filtered)}")
+    
+    if players_filtered.empty:
+        logging.error(f"No players found for the specified teams: {teams_to_include}")
+        return
+    
+    all_data = pd.DataFrame()
+    skipped_players = []
     
     for _, player in players_filtered.iterrows():
         player_id = player.get('PERSON_ID')
@@ -58,7 +76,12 @@ def main():
                 'TOV': 'TOV',
                 'TEAM_ABBREVIATION': 'Opponent_Team'
             })
-            gamelog['PLAYER_NAME'] = player_name
+            
+            # Drop all non-numeric columns
+            non_numeric_cols = gamelog.select_dtypes(exclude=['number']).columns.tolist()
+            logging.info(f"Dropping non-numeric columns: {non_numeric_cols}")
+            gamelog = gamelog.drop(columns=non_numeric_cols, errors='ignore')
+            
             all_data = pd.concat([all_data, gamelog], ignore_index=True)
             logging.info(f"Data appended for player: {player_name}")
         except KeyError as e:
@@ -72,11 +95,17 @@ def main():
         time.sleep(0.5)  # Adjust delay as needed
     
     if all_data.empty:
-        logging.error("No data collected after processing all players. Exiting the program.")
+        logging.error("No data collected after processing filtered players. Exiting the program.")
         return
+    
+    logging.info("Sample data before cleaning:")
+    logging.info(all_data.head())
+    logging.info(f"Data types before cleaning:\n{all_data.dtypes}")
     
     logging.info("Cleaning and preprocessing the collected data.")
     all_data = data_preprocessing.clean_data(all_data)
+    logging.info("Sample data after cleaning:")
+    logging.info(all_data.head())
     
     logging.info("Starting model training.")
     reg_model, clf_model, scaler, label_encoder = model_training.build_and_train_models(all_data, threshold=20)
