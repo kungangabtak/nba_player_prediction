@@ -20,12 +20,15 @@ def main():
     all_data = pd.DataFrame()
     skipped_players = []
     
-    # Limit the number of players to process to avoid timeouts (e.g., first 10 players)
-    player_limit = 10
-    players_to_process = players.head(player_limit)
-    logging.info(f"Processing first {player_limit} players to avoid timeouts.")
+    # Specify the two teams you want to analyze
+    teams_to_include = ['LAL', 'BOS']  # Example: Los Angeles Lakers and Boston Celtics
+    logging.info(f"Filtering players from teams: {teams_to_include}")
     
-    for _, player in players_to_process.iterrows():
+    # Filter players belonging to the specified teams
+    players_filtered = players[players['TEAM_ABBREVIATION'].isin(teams_to_include)]
+    logging.info(f"Number of players after filtering: {len(players_filtered)}")
+    
+    for _, player in players_filtered.iterrows():
         player_id = player.get('PERSON_ID')
         player_name = player.get('DISPLAY_FIRST_LAST', 'Unknown')
         
