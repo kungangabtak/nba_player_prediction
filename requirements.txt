@@ -1,9 +1,15 @@
-pandas
-numpy
-scikit-learn
-xgboost
-nba_api
-joblib
-streamlit
+# requirements.txt
+
+aiohttp
+argparse
 matplotlib
+numpy
+nba-api
+pandas
+requests
 seaborn
+scikit-learn
+streamlit
+tenacity
+tqdm
+xgboost

@@ -6,35 +6,33 @@ from nba_api.stats.endpoints import commonplayerinfo, playergamelog, commonallpl
 from nba_api.stats.static import teams
 import pickle
 import os
-
-def preprocess_data(df, threshold, label_encoder=None, scaler=None):
-    features = df[['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 'ThreeP_Percentage', 'Usage_Rate', 'PER', 'Opponent_Team']]
-    
-    if label_encoder is None:
-        label_encoder = LabelEncoder()
-        features['Opponent_Team'] = label_encoder.fit_transform(features['Opponent_Team'])
-    else:
-        features['Opponent_Team'] = label_encoder.transform(features['Opponent_Team'])
-    
-    target_classification = (df['Points'] > threshold).astype(int)
-    
-    if scaler is None:
-        scaler = StandardScaler()
-        features_scaled = scaler.fit_transform(features)
-    else:
-        features_scaled = scaler.transform(features)
-    
-    return features_scaled, target_classification, scaler, label_encoder
+import logging
+from functools import lru_cache
 
 def get_player_id(full_name):
+    """
+    Retrieves the PERSON_ID for a given player's full name.
+
+    Parameters:
+        full_name (str): The full name of the player (e.g., "LeBron James").
+
+    Returns:
+        int or None: The PERSON_ID if found, else None.
+    """
     players = commonallplayers.CommonAllPlayers(is_only_current_season=1).get_data_frames()[0]
-    player = players[players['DISPLAY_FIRST_LAST'] == full_name]
-    if not player.empty:
-        return player.iloc[0]['PERSON_ID']
+    matched_players = players[players['DISPLAY_FIRST_LAST'].str.lower() == full_name.lower()]
+    if not matched_players.empty:
+        if len(matched_players) > 1:
+            logging.warning(f"Multiple players found with the name '{full_name}'. Selecting the first match.")
+        return matched_players.iloc[0]['PERSON_ID']
     return None
 
+@lru_cache(maxsize=1)
+def load_team_dict():
+    return teams.get_teams()
+
 def get_full_team_name(abbreviation):
-    team_dict = teams.get_teams()
+    team_dict = load_team_dict()
     for team in team_dict:
         if team['abbreviation'] == abbreviation:
             return team['full_name']

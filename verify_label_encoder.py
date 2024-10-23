@@ -8,6 +8,7 @@ def load_label_encoder():
     if not os.path.exists(label_encoder_path):
         raise FileNotFoundError(f"Label encoder file '{label_encoder_path}' not found.")
     with open(label_encoder_path, 'rb') as file:
+        file.seek(0)  # Move to the beginning of the file
         label_encoder = pickle.load(file)
     return label_encoder
 

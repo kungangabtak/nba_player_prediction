@@ -8,10 +8,20 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+@st.cache(allow_output_mutation=True)
+def load_models():
+    reg_model = prediction.load_model('Regressor')
+    clf_model = prediction.load_model('Classifier')
+    scaler = prediction.load_scaler()
+    label_encoder = prediction.load_label_encoder()
+    return reg_model, clf_model, scaler, label_encoder
+
 def main():
     st.title("NBA Player Performance Prediction")
     
-    season = '2022-23'
+    reg_model, clf_model, scaler, label_encoder = load_models()
+    
+    season = '2023-24'
     player_name = st.text_input("Enter Player Name (e.g., LeBron James)")
     
     if player_name:
@@ -48,17 +58,25 @@ def main():
                     st.write(f"**Predicted Points:** {reg_pred:.2f}")
                     st.write(f"**Will Score Above {threshold_value} Points:** {'Yes' if clf_pred == 1 else 'No'}")
                 elif threshold_metric == 'Blocks':
-                    # Placeholder for Blocks prediction
-                    st.warning("Blocks prediction not implemented yet.")
+                    reg_pred = prediction.predict_regression_blocks(input_df)[0]
+                    clf_pred = prediction.predict_classification_blocks(input_df)[0]
+                    st.write(f"**Predicted Blocks:** {reg_pred:.2f}")
+                    st.write(f"**Will Block Above {threshold_value} Times:** {'Yes' if clf_pred == 1 else 'No'}")
                 elif threshold_metric == 'Assists':
-                    # Placeholder for Assists prediction
-                    st.warning("Assists prediction not implemented yet.")
+                    reg_pred = prediction.predict_regression_assists(input_df)[0]
+                    clf_pred = prediction.predict_classification_assists(input_df)[0]
+                    st.write(f"**Predicted Assists:** {reg_pred:.2f}")
+                    st.write(f"**Will Assist Above {threshold_value} Times:** {'Yes' if clf_pred == 1 else 'No'}")
                 elif threshold_metric == 'Rebounds':
-                    # Placeholder for Rebounds prediction
-                    st.warning("Rebounds prediction not implemented yet.")
+                    reg_pred = prediction.predict_regression_rebounds(input_df)[0]
+                    clf_pred = prediction.predict_classification_rebounds(input_df)[0]
+                    st.write(f"**Predicted Rebounds:** {reg_pred:.2f}")
+                    st.write(f"**Will Rebound Above {threshold_value} Times:** {'Yes' if clf_pred == 1 else 'No'}")
                 elif threshold_metric == 'Steals':
-                    # Placeholder for Steals prediction
-                    st.warning("Steals prediction not implemented yet.")
+                    reg_pred = prediction.predict_regression_steals(input_df)[0]
+                    clf_pred = prediction.predict_classification_steals(input_df)[0]
+                    st.write(f"**Predicted Steals:** {reg_pred:.2f}")
+                    st.write(f"**Will Steal Above {threshold_value} Times:** {'Yes' if clf_pred == 1 else 'No'}")
                 else:
                     st.error("Invalid metric selected.")
             except FileNotFoundError as e:

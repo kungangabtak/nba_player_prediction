@@ -1,5 +1,8 @@
 # main.py
 
+import argparse
+import datetime
+from tqdm import tqdm
 from src import utils, model_training, data_collection, feature_engineering, data_preprocessing
 import pandas as pd
 import logging
@@ -7,15 +10,36 @@ import time
 from nba_api.stats.static import teams
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def main():
-    season = '2022-23'
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='NBA Player Performance Prediction Model')
+    parser.add_argument('--season', type=str, help='Season in format YYYY-YY', default=None)
+    parser.add_argument('--teams', type=str, nargs='+', help='Team abbreviations to include', default=['LAL', 'BOS'])
+    args = parser.parse_args()
+    
+    # Dynamic Season Input
+    if args.season:
+        season = args.season
+    else:
+        current_year = datetime.datetime.now().year
+        current_month = datetime.datetime.now().month
+        if current_month >= 10:  # NBA season typically starts in October
+            # Set to current season (e.g., 2024-25)
+            season = f"{current_year}-{str(current_year+1)[-2:]}"
+        else:
+            # Set to previous season (e.g., 2023-24)
+            season = f"{current_year-1}-{str(current_year)[-2:]}"
+    
+    teams_to_include = args.teams
+    logging.info(f"Filtering players from teams: {teams_to_include}")
+    
     logging.info(f"Starting data collection for the {season} season.")
     
     players = data_collection.get_all_players(season)
     if players.empty:
-        logging.error("No players retrieved. Exiting the program.")
+        logging.error("No players retrieved for the specified season. Exiting the program.")
         return
     
     # Verify the available columns and unique team abbreviations
@@ -31,10 +55,6 @@ def main():
     unique_teams = players['TEAM_ABBREVIATION'].unique()
     logging.info(f"Unique TEAM_ABBREVIATION values: {unique_teams}")
     
-    # Specify the two teams you want to analyze
-    teams_to_include = ['LAL', 'BOS']  # Example: Los Angeles Lakers and Boston Celtics
-    logging.info(f"Filtering players from teams: {teams_to_include}")
-    
     # Filter players belonging to the specified teams
     players_filtered = players[players['TEAM_ABBREVIATION'].isin(teams_to_include)]
     logging.info(f"Number of players after filtering: {len(players_filtered)}")
@@ -46,40 +66,45 @@ def main():
     all_data = pd.DataFrame()
     skipped_players = []
     
-    for _, player in players_filtered.iterrows():
-        player_id = player.get('PERSON_ID')
-        player_name = player.get('DISPLAY_FIRST_LAST', 'Unknown')
-        
-        if pd.isna(player_id):
-            logging.warning(f"Skipping player with missing PERSON_ID: {player_name}")
-            skipped_players.append(player_name)
+    player_ids = players_filtered['PERSON_ID'].dropna().unique().tolist()
+    gamelogs = data_collection.get_all_player_data(player_ids, season)
+    
+    for player_id, gamelog in tqdm(zip(player_ids, gamelogs), total=len(player_ids), desc="Processing Gamelogs"):
+        if gamelog.empty:
+            logging.warning(f"No game log data for player ID {player_id}. Skipping.")
+            skipped_players.append(player_id)
             continue
         
-        gamelog = data_collection.get_player_data(player_id, season)
-        if gamelog.empty:
-            logging.warning(f"No game log data for player: {player_name} (ID: {player_id}). Skipping.")
+        # Retrieve player name using player_id
+        player_name_series = players_filtered.loc[players_filtered['PERSON_ID'] == player_id, 'DISPLAY_FIRST_LAST']
+        if player_name_series.empty:
+            logging.warning(f"Player name not found for player ID {player_id}. Skipping.")
+            skipped_players.append(player_id)
+            continue
+        player_name = player_name_series.values[0]
+        
+        # Log the columns of the gamelog for debugging
+        logging.debug(f"Gamelog columns for player {player_name} (ID: {player_id}): {gamelog.columns.tolist()}")
+        
+        # Check if 'PTS' exists in gamelog
+        if 'PTS' not in gamelog.columns:
+            logging.warning(f"Player {player_name} (ID: {player_id}) gamelog is missing 'PTS' column. Available columns: {gamelog.columns.tolist()}. Skipping.")
             skipped_players.append(player_name)
             continue
         
         try:
             gamelog = feature_engineering.engineer_features(gamelog)
-            gamelog = gamelog.rename(columns={
-                'PTS': 'Points',
-                'REB': 'REB',
-                'AST': 'AST',
-                'STL': 'STL',
-                'BLK': 'BLK',
-                'FGA': 'FGA',
-                'FGM': 'FGM',
-                'FTA': 'FTA',
-                'FTM': 'FTM',
-                'TOV': 'TOV',
-                'TEAM_ABBREVIATION': 'Opponent_Team'
-            })
+            # No need to rename 'PTS' to 'PTS' again since it's already handled in feature engineering
+            
+            # Verify 'PTS' exists after feature engineering
+            if 'PTS' not in gamelog.columns:
+                logging.warning(f"After feature engineering, 'PTS' column missing for player: {player_name}. Available columns: {gamelog.columns.tolist()}. Skipping.")
+                skipped_players.append(player_name)
+                continue
             
             # Drop all non-numeric columns
             non_numeric_cols = gamelog.select_dtypes(exclude=['number']).columns.tolist()
-            logging.info(f"Dropping non-numeric columns: {non_numeric_cols}")
+            logging.debug(f"Dropping non-numeric columns: {non_numeric_cols}")
             gamelog = gamelog.drop(columns=non_numeric_cols, errors='ignore')
             
             all_data = pd.concat([all_data, gamelog], ignore_index=True)
@@ -106,6 +131,13 @@ def main():
     all_data = data_preprocessing.clean_data(all_data)
     logging.info("Sample data after cleaning:")
     logging.info(all_data.head())
+    
+    # Verify that no non-numeric columns remain
+    non_numeric_after = all_data.select_dtypes(exclude=['number']).columns.tolist()
+    if non_numeric_after:
+        logging.error(f"Non-numeric columns still present after cleaning: {non_numeric_after}")
+    else:
+        logging.info("No non-numeric columns present after cleaning.")
     
     logging.info("Starting model training.")
     reg_model, clf_model, scaler, label_encoder = model_training.build_and_train_models(all_data, threshold=20)
