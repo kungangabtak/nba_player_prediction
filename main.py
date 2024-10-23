@@ -3,6 +3,7 @@
 from src import utils, model_training, data_collection, feature_engineering, data_preprocessing
 import pandas as pd
 import logging
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,8 +19,13 @@ def main():
     
     all_data = pd.DataFrame()
     skipped_players = []
-
-    for _, player in players.iterrows():
+    
+    # Limit the number of players to process to avoid timeouts (e.g., first 10 players)
+    player_limit = 10
+    players_to_process = players.head(player_limit)
+    logging.info(f"Processing first {player_limit} players to avoid timeouts.")
+    
+    for _, player in players_to_process.iterrows():
         player_id = player.get('PERSON_ID')
         player_name = player.get('DISPLAY_FIRST_LAST', 'Unknown')
         
@@ -58,6 +64,9 @@ def main():
         except Exception as e:
             logging.error(f"Unexpected error for player: {player_name} - {e}")
             skipped_players.append(player_name)
+        
+        # Optional: Sleep to respect API rate limits
+        time.sleep(0.5)  # Adjust delay as needed
     
     if all_data.empty:
         logging.error("No data collected after processing all players. Exiting the program.")

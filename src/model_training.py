@@ -53,13 +53,13 @@ def build_and_train_models(data, threshold=20):
     
     # Save models, scaler, and label encoder
     os.makedirs('models', exist_ok=True)
-    with open('models/XGBoostRegressor.pkl', 'wb') as f:
+    with open(os.path.join('models', 'XGBoostRegressor.pkl'), 'wb') as f:
         pickle.dump(reg_model, f)
-    with open('models/XGBoostClassifier.pkl', 'wb') as f:
+    with open(os.path.join('models', 'XGBoostClassifier.pkl'), 'wb') as f:
         pickle.dump(clf_model, f)
-    with open('models/scaler.pkl', 'wb') as f:
+    with open(os.path.join('models', 'scaler.pkl'), 'wb') as f:
         pickle.dump(scaler, f)
-    with open('models/label_encoder.pkl', 'wb') as f:
+    with open(os.path.join('models', 'label_encoder.pkl'), 'wb') as f:
         pickle.dump(label_encoder, f)
     
     return reg_model, clf_model, scaler, label_encoder

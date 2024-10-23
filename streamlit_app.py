@@ -12,7 +12,6 @@ def main():
     st.title("NBA Player Performance Prediction")
     
     season = '2022-23'
-    
     player_name = st.text_input("Enter Player Name (e.g., LeBron James)")
     
     if player_name:
@@ -41,27 +40,33 @@ def main():
         threshold_value = st.number_input(f"Enter Threshold for {threshold_metric}", min_value=0.0, value=20.0)
         
         if st.button("Predict"):
-            if threshold_metric == 'Points':
+            try:
                 input_df = prediction.prepare_input(minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent)
-                reg_pred = prediction.predict_regression(input_df)[0]
-                clf_pred = prediction.predict_classification(input_df)[0]
-                st.write(f"**Predicted Points:** {reg_pred:.2f}")
-                st.write(f"**Will Score Above {threshold_value} Points:** {'Yes' if clf_pred == 1 else 'No'}")
-            elif threshold_metric == 'Blocks':
-                # Placeholder for Blocks prediction
-                st.warning("Blocks prediction not implemented yet.")
-            elif threshold_metric == 'Assists':
-                # Placeholder for Assists prediction
-                st.warning("Assists prediction not implemented yet.")
-            elif threshold_metric == 'Rebounds':
-                # Placeholder for Rebounds prediction
-                st.warning("Rebounds prediction not implemented yet.")
-            elif threshold_metric == 'Steals':
-                # Placeholder for Steals prediction
-                st.warning("Steals prediction not implemented yet.")
-            else:
-                st.error("Invalid metric selected.")
-    
+                if threshold_metric == 'Points':
+                    reg_pred = prediction.predict_regression(input_df)[0]
+                    clf_pred = prediction.predict_classification(input_df)[0]
+                    st.write(f"**Predicted Points:** {reg_pred:.2f}")
+                    st.write(f"**Will Score Above {threshold_value} Points:** {'Yes' if clf_pred == 1 else 'No'}")
+                elif threshold_metric == 'Blocks':
+                    # Placeholder for Blocks prediction
+                    st.warning("Blocks prediction not implemented yet.")
+                elif threshold_metric == 'Assists':
+                    # Placeholder for Assists prediction
+                    st.warning("Assists prediction not implemented yet.")
+                elif threshold_metric == 'Rebounds':
+                    # Placeholder for Rebounds prediction
+                    st.warning("Rebounds prediction not implemented yet.")
+                elif threshold_metric == 'Steals':
+                    # Placeholder for Steals prediction
+                    st.warning("Steals prediction not implemented yet.")
+                else:
+                    st.error("Invalid metric selected.")
+            except FileNotFoundError as e:
+                st.error(f"Model file missing: {e}")
+            except ValueError as e:
+                st.error(f"Input error: {e}")
+            except Exception as e:
+                st.error(f"An unexpected error occurred: {e}")
     else:
         st.info("Please enter a player's name to begin prediction.")
 

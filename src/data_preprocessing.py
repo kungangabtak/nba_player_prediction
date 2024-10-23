@@ -5,14 +5,13 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
 def clean_data(df):
+    # Select only numeric columns for imputation
+    numeric_cols = df.select_dtypes(include=['number']).columns
     imputer = SimpleImputer(strategy='mean')
-    df_imputed = pd.DataFrame(imputer.fit_transform(df), columns=df.columns)
+    
+    try:
+        df_imputed = pd.DataFrame(imputer.fit_transform(df[numeric_cols]), columns=numeric_cols)
+    except ValueError as e:
+        raise ValueError(f"Imputation failed: {e}")
+    
     return df_imputed
-
-def scale_data(df, scaler=None):
-    if scaler is None:
-        scaler = StandardScaler()
-        scaled = scaler.fit_transform(df)
-    else:
-        scaled = scaler.transform(df)
-    return pd.DataFrame(scaled, columns=df.columns), scaler
