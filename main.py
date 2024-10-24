@@ -19,7 +19,7 @@ def setup_logging():
     Logs are output to both the console and a file named 'training.log'.
     """
     logging.basicConfig(
-        level=logging.DEBUG,  # Set to INFO or WARNING in production
+        level=logging.INFO,  # Set to DEBUG for more detailed logs
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(sys.stdout),
@@ -50,35 +50,20 @@ def fetch_players(season='2022-23'):
         logging.error(f"Error fetching players for season {season}: {e}")
         sys.exit(1)
 
-def filter_players(players_df, team_abbreviations):
+def fetch_game_logs(players_df, season='2022-23'):
     """
-    Filters players based on the specified team abbreviations.
+    Fetches game logs for each player in the players DataFrame.
 
     Parameters:
-        players_df (pd.DataFrame): DataFrame containing all players.
-        team_abbreviations (list): List of team abbreviations to filter by (e.g., ['LAL', 'BOS']).
-
-    Returns:
-        pd.DataFrame: DataFrame containing filtered players.
-    """
-    logging.info(f"Filtering players from teams: {team_abbreviations}")
-    filtered_players = players_df[players_df['TEAM_ABBREVIATION'].isin(team_abbreviations)]
-    logging.info(f"Number of players after filtering: {len(filtered_players)}")
-    return filtered_players
-
-def fetch_game_logs(filtered_players, season='2022-23'):
-    """
-    Fetches game logs for each player in the filtered players DataFrame.
-
-    Parameters:
-        filtered_players (pd.DataFrame): DataFrame containing filtered players.
+        players_df (pd.DataFrame): DataFrame containing players.
         season (str): The NBA season (e.g., '2022-23').
 
     Returns:
         pd.DataFrame: Concatenated DataFrame of all fetched game logs.
     """
     all_game_logs = []
-    for index, row in tqdm(filtered_players.iterrows(), total=filtered_players.shape[0], desc="Fetching game logs"):
+    total_players = players_df.shape[0]
+    for index, row in tqdm(players_df.iterrows(), total=total_players, desc="Fetching game logs"):
         player_id = row['PERSON_ID']
         player_name = row['DISPLAY_FIRST_LAST']
         logging.debug(f"Fetching game logs for player {player_name} (ID: {player_id})")
@@ -93,7 +78,7 @@ def fetch_game_logs(filtered_players, season='2022-23'):
                     timeout=60  # Increase timeout to 60 seconds
                 ).get_data_frames()[0]
                 if gamelog.empty:
-                    logging.warning(f"No game log data for player ID {player_id}. Skipping.")
+                    logging.debug(f"No game log data for player ID {player_id}. Skipping.")
                     gamelog = None
                 break  # If successful, exit the retry loop
             except Exception as e:
@@ -104,15 +89,18 @@ def fetch_game_logs(filtered_players, season='2022-23'):
                 else:
                     logging.error(f"Failed to fetch game log for player ID {player_id} after {max_retries} attempts.")
                     gamelog = None
+            # Throttle requests to avoid hitting rate limits
+            time.sleep(0.5)
         if gamelog is not None:
             gamelog['PLAYER_NAME'] = player_name
+            gamelog['TEAM_ABBREVIATION'] = row['TEAM_ABBREVIATION']
             all_game_logs.append(gamelog)
-            logging.info(f"Successfully fetched data for player ID {player_id}.")
+            logging.debug(f"Successfully fetched data for player ID {player_id}.")
     if not all_game_logs:
         logging.error("No game logs fetched for any players.")
         return pd.DataFrame()
     else:
-        logging.info(f"Fetched game logs for {len(all_game_logs)} players.")
+        logging.info(f"Fetched game logs for {len(all_game_logs)} players out of {total_players}.")
         return pd.concat(all_game_logs, ignore_index=True)
 
 def train_and_save_models(processed_data, label_encoder, models_dir='models'):
@@ -125,7 +113,7 @@ def train_and_save_models(processed_data, label_encoder, models_dir='models'):
         models_dir (str): Directory to save the trained models and preprocessors.
     """
     if processed_data.empty:
-        logging.error("No data collected after processing filtered players. Exiting the program.")
+        logging.error("No data collected after processing players. Exiting the program.")
         sys.exit(1)
 
     logging.info("Starting feature scaling.")
@@ -193,32 +181,25 @@ def main():
     """
     setup_logging()
 
-    # Define the teams to filter
-    teams_to_filter = ['LAL', 'BOS']
-
     # Set the season to a completed season with available data
     season = '2022-23'
 
     # Fetch all players for the season
     players_all = fetch_players(season=season)
 
-    # Filter players by team
-    filtered_players = filter_players(players_all, teams_to_filter)
-
-    if filtered_players.empty:
-        logging.error("No players found after filtering. Exiting the program.")
+    if players_all.empty:
+        logging.error("No players fetched. Exiting the program.")
         sys.exit(1)
 
-    # Fetch game logs for filtered players
-    all_game_logs = fetch_game_logs(filtered_players, season=season)
+    # Fetch game logs for all players
+    all_game_logs = fetch_game_logs(players_all, season=season)
 
     if all_game_logs.empty:
         logging.error("No game logs were fetched. Exiting the program.")
         sys.exit(1)
 
     # Process game logs with feature engineering
-    # Ensure that 'players_df' passed to engineer_features contains necessary information
-    processed_data, label_encoder = engineer_features(all_game_logs, filtered_players)
+    processed_data, label_encoder = engineer_features(all_game_logs, players_all)
 
     if processed_data.empty or label_encoder is None:
         logging.error("Feature engineering failed. Exiting the program.")
