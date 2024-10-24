@@ -33,9 +33,6 @@ def build_and_train_models(data, threshold=20):
     label_encoder = LabelEncoder()
     label_encoder.fit(all_team_abbreviations)
 
-    # Check for any opponent teams not in the label encoder
-    unique_opponents = data['Opponent_Team'].dropna().unique()
-
     # Ensure Opponent_Team is string type before encoding
     data['Opponent_Team'] = data['Opponent_Team'].astype(str)
 

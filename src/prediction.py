@@ -25,24 +25,45 @@ class ModelManager:
         if not os.path.exists(path):
             raise FileNotFoundError(f"Model file {path} does not exist.")
 
-        with open(path, 'rb') as file:
-            model = pickle.load(file)
+        try:
+            with open(path, 'rb') as file:
+                model = pickle.load(file)
+        except pickle.UnpicklingError as e:
+            logging.error(f"Error unpickling the {model_type} model from {path}: {e}")
+            raise
+        except Exception as e:
+            logging.error(f"Unexpected error loading {model_type} model from {path}: {e}")
+            raise
         return model
 
     def load_scaler(self):
         if self.scaler is None:
             if not os.path.exists(self.scaler_path):
                 raise FileNotFoundError(f"Scaler file {self.scaler_path} does not exist.")
-            with open(self.scaler_path, 'rb') as file:
-                self.scaler = pickle.load(file)
+            try:
+                with open(self.scaler_path, 'rb') as file:
+                    self.scaler = pickle.load(file)
+            except pickle.UnpicklingError as e:
+                logging.error(f"Error unpickling the scaler from {self.scaler_path}: {e}")
+                raise
+            except Exception as e:
+                logging.error(f"Unexpected error loading scaler from {self.scaler_path}: {e}")
+                raise
         return self.scaler
 
     def load_label_encoder(self):
         if self.label_encoder is None:
             if not os.path.exists(self.label_encoder_path):
                 raise FileNotFoundError(f"Label encoder file {self.label_encoder_path} does not exist.")
-            with open(self.label_encoder_path, 'rb') as file:
-                self.label_encoder = pickle.load(file)
+            try:
+                with open(self.label_encoder_path, 'rb') as file:
+                    self.label_encoder = pickle.load(file)
+            except pickle.UnpicklingError as e:
+                logging.error(f"Error unpickling the label encoder from {self.label_encoder_path}: {e}")
+                raise
+            except Exception as e:
+                logging.error(f"Unexpected error loading label encoder from {self.label_encoder_path}: {e}")
+                raise
         return self.label_encoder
 
     def prepare_input(self, minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent):
@@ -51,7 +72,11 @@ class ModelManager:
         scaler = self.load_scaler()
         label_encoder = self.load_label_encoder()
 
-        opponent_encoded = label_encoder.transform([opponent])[0]
+        try:
+            opponent_encoded = label_encoder.transform([opponent])[0]
+        except ValueError as e:
+            logging.error(f"Error encoding opponent team '{opponent}': {e}")
+            raise
 
         input_data = pd.DataFrame({
             'Minutes_Played': [minutes],
@@ -63,17 +88,30 @@ class ModelManager:
             'Opponent_Team': [opponent_encoded]
         })
 
-        input_scaled = scaler.transform(input_data)
+        try:
+            input_scaled = scaler.transform(input_data)
+        except Exception as e:
+            logging.error(f"Error scaling input data: {e}")
+            raise
+
         return input_scaled
 
     def predict_regression(self, input_data):
         reg_model = self.load_model('Regressor')
-        predictions = reg_model.predict(input_data)
+        try:
+            predictions = reg_model.predict(input_data)
+        except Exception as e:
+            logging.error(f"Error during regression prediction: {e}")
+            raise
         return predictions
 
     def predict_classification(self, input_data):
         clf_model = self.load_model('Classifier')
-        predictions = clf_model.predict(input_data)
+        try:
+            predictions = clf_model.predict(input_data)
+        except Exception as e:
+            logging.error(f"Error during classification prediction: {e}")
+            raise
         return predictions
 
 # Initialize a global ModelManager instance

@@ -4,22 +4,43 @@ import streamlit as st
 import pandas as pd
 from src import prediction, utils, data_collection
 import logging
+import pickle
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 @st.cache_resource
 def load_models():
-    reg_model = prediction.load_model('Regressor')
-    clf_model = prediction.load_model('Classifier')
-    scaler = prediction.load_scaler()
-    label_encoder = prediction.load_label_encoder()
-    return reg_model, clf_model, scaler, label_encoder
+    try:
+        reg_model = prediction.load_model('Regressor')
+        clf_model = prediction.load_model('Classifier')
+        scaler = prediction.load_scaler()
+        label_encoder = prediction.load_label_encoder()
+        return reg_model, clf_model, scaler, label_encoder
+    except FileNotFoundError as e:
+        logging.error(f"Model file missing: {e}")
+        raise
+    except pickle.UnpicklingError as e:
+        logging.error(f"Error unpickling model: {e}")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error loading models: {e}")
+        raise
 
 def main():
     st.title("NBA Player Performance Prediction")
 
-    reg_model, clf_model, scaler, label_encoder = load_models()
+    try:
+        reg_model, clf_model, scaler, label_encoder = load_models()
+    except FileNotFoundError as e:
+        st.error(f"Model file missing: {e}")
+        return
+    except pickle.UnpicklingError as e:
+        st.error(f"Error loading model: {e}")
+        return
+    except Exception as e:
+        st.error(f"An unexpected error occurred while loading models: {e}")
+        return
 
     season = '2023-24'
     player_name = st.text_input("Enter Player Name (e.g., LeBron James)")
@@ -83,6 +104,8 @@ def main():
                     st.error("Invalid metric selected.")
             except FileNotFoundError as e:
                 st.error(f"Model file missing: {e}")
+            except pickle.UnpicklingError as e:
+                st.error(f"Error loading model: {e}")
             except ValueError as e:
                 st.error(f"Input error: {e}")
             except Exception as e:
