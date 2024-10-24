@@ -9,18 +9,18 @@ import os
 import logging
 from functools import lru_cache
 
-def get_player_id(full_name):
+def get_player_id(full_name, players_df):
     """
     Retrieves the PERSON_ID for a given player's full name.
 
     Parameters:
         full_name (str): The full name of the player (e.g., "LeBron James").
+        players_df (pd.DataFrame): DataFrame containing player information.
 
     Returns:
         int or None: The PERSON_ID if found, else None.
     """
-    players = commonallplayers.CommonAllPlayers(is_only_current_season=1).get_data_frames()[0]
-    matched_players = players[players['DISPLAY_FIRST_LAST'].str.lower() == full_name.lower()]
+    matched_players = players_df[players_df['DISPLAY_FIRST_LAST'].str.lower() == full_name.lower()]
     if not matched_players.empty:
         if len(matched_players) > 1:
             logging.warning(f"Multiple players found with the name '{full_name}'. Selecting the first match.")
@@ -50,9 +50,9 @@ def fetch_player_data(player_id, season, opponent_team=None):
     
     return gamelog
 
-def get_opponent_teams(player_id, season):
+def get_opponent_teams(player_id, season, gamelogs_df):
     gamelog = fetch_player_data(player_id, season)
     if gamelog.empty:
         return []
-    opponents = gamelog['MATCHUP'].str.split(' @ | vs ').str[1].unique().tolist()
+    opponents = gamelogs_df['Opponent_Team'].unique().tolist()
     return opponents

@@ -1,114 +1,98 @@
 # src/prediction.py
 
 import pickle
-import pandas as pd
 import os
 import logging
 
 class ModelManager:
     def __init__(self):
-        self.reg_model = self.load_model('Regressor')
-        self.clf_model = self.load_model('Classifier')
-        self.scaler = self.load_scaler()
-        self.label_encoder = self.load_label_encoder()
-    
+        self.models_dir = 'models'
+        self.regressor_path = os.path.join(self.models_dir, 'XGBoostRegressor.pkl')
+        self.classifier_path = os.path.join(self.models_dir, 'XGBoostClassifier.pkl')
+        self.scaler_path = os.path.join(self.models_dir, 'scaler.pkl')
+        self.label_encoder_path = os.path.join(self.models_dir, 'label_encoder.pkl')
+        self.scaler = None
+        self.label_encoder = None
+
     def load_model(self, model_type):
-        model_path = os.path.join('models', f'XGBoost{model_type}.pkl')
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file '{model_path}' not found.")
-        with open(model_path, 'rb') as file:
+        if model_type == 'Regressor':
+            path = self.regressor_path
+        elif model_type == 'Classifier':
+            path = self.classifier_path
+        else:
+            raise ValueError("Model type must be 'Regressor' or 'Classifier'")
+
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Model file {path} does not exist.")
+
+        with open(path, 'rb') as file:
             model = pickle.load(file)
         return model
-    
+
     def load_scaler(self):
-        scaler_path = os.path.join('models', 'scaler.pkl')
-        if not os.path.exists(scaler_path):
-            raise FileNotFoundError(f"Scaler file '{scaler_path}' not found.")
-        with open(scaler_path, 'rb') as file:
-            scaler = pickle.load(file)
-        return scaler
-    
+        if self.scaler is None:
+            if not os.path.exists(self.scaler_path):
+                raise FileNotFoundError(f"Scaler file {self.scaler_path} does not exist.")
+            with open(self.scaler_path, 'rb') as file:
+                self.scaler = pickle.load(file)
+        return self.scaler
+
     def load_label_encoder(self):
-        label_encoder_path = os.path.join('models', 'label_encoder.pkl')
-        if not os.path.exists(label_encoder_path):
-            raise FileNotFoundError(f"Label encoder file '{label_encoder_path}' not found.")
-        with open(label_encoder_path, 'rb') as file:
-            label_encoder = pickle.load(file)
-        return label_encoder
-    
-    def predict_regression(self, input_data):
-        features_scaled = self.scaler.transform(input_data)
-        prediction = self.reg_model.predict(features_scaled)
-        return prediction
-    
-    def predict_classification(self, input_data):
-        features_scaled = self.scaler.transform(input_data)
-        prediction = self.clf_model.predict(features_scaled)
-        return prediction
-    
-    def prepare_input(self, minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent_team):
-        try:
-            opponent_encoded = self.label_encoder.transform([opponent_team])[0]
-        except ValueError:
-            raise ValueError(f"Opponent team '{opponent_team}' was not seen during training.")
-        
-        input_df = pd.DataFrame({
+        if self.label_encoder is None:
+            if not os.path.exists(self.label_encoder_path):
+                raise FileNotFoundError(f"Label encoder file {self.label_encoder_path} does not exist.")
+            with open(self.label_encoder_path, 'rb') as file:
+                self.label_encoder = pickle.load(file)
+        return self.label_encoder
+
+    def prepare_input(self, minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent):
+        import pandas as pd
+        import numpy as np
+        scaler = self.load_scaler()
+        label_encoder = self.load_label_encoder()
+
+        opponent_encoded = label_encoder.transform([opponent])[0]
+
+        input_data = pd.DataFrame({
             'Minutes_Played': [minutes],
             'FG_Percentage': [fg_pct],
             'FT_Percentage': [ft_pct],
             'ThreeP_Percentage': [threep_pct],
             'Usage_Rate': [usg_pct],
-            'PER': [per],
+            'EFFICIENCY': [per],
             'Opponent_Team': [opponent_encoded]
         })
-        return input_df
 
+        input_scaled = scaler.transform(input_data)
+        return input_scaled
+
+    def predict_regression(self, input_data):
+        reg_model = self.load_model('Regressor')
+        predictions = reg_model.predict(input_data)
+        return predictions
+
+    def predict_classification(self, input_data):
+        clf_model = self.load_model('Classifier')
+        predictions = clf_model.predict(input_data)
+        return predictions
+
+# Initialize a global ModelManager instance
 model_manager = ModelManager()
+
+def load_model(model_type):
+    return model_manager.load_model(model_type)
+
+def load_scaler():
+    return model_manager.load_scaler()
+
+def load_label_encoder():
+    return model_manager.load_label_encoder()
+
+def prepare_input(minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent):
+    return model_manager.prepare_input(minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent)
 
 def predict_regression(input_data):
     return model_manager.predict_regression(input_data)
 
 def predict_classification(input_data):
-    return model_manager.predict_classification(input_data)
-
-def prepare_input(minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent_team):
-    """
-    Prepares the input dataframe for prediction.
-
-    Parameters:
-        minutes (float): Minutes played.
-        fg_pct (float): Field goal percentage.
-        ft_pct (float): Free throw percentage.
-        threep_pct (float): Three-point percentage.
-        usg_pct (float): Usage rate.
-        per (float): Player Efficiency Rating.
-        opponent_team (str): Opponent team abbreviation.
-
-    Returns:
-        pd.DataFrame: Prepared input dataframe.
-    """
-    return model_manager.prepare_input(minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent_team)
-
-def predict_regression_blocks(input_data):
-    return model_manager.predict_regression(input_data)
-
-def predict_classification_blocks(input_data):
-    return model_manager.predict_classification(input_data)
-
-def predict_regression_assists(input_data):
-    return model_manager.predict_regression(input_data)
-
-def predict_classification_assists(input_data):
-    return model_manager.predict_classification(input_data)
-
-def predict_regression_rebounds(input_data):
-    return model_manager.predict_regression(input_data)
-
-def predict_classification_rebounds(input_data):
-    return model_manager.predict_classification(input_data)
-
-def predict_regression_steals(input_data):
-    return model_manager.predict_regression(input_data)
-
-def predict_classification_steals(input_data):
     return model_manager.predict_classification(input_data)
