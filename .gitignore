@@ -106,6 +106,7 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+
 # Pyre type checker
 .pyre/
 
@@ -115,8 +116,4 @@ dmypy.json
 # macOS specific
 .DS_Store
 
-# Windows specific
-Thumbs.db
-ehthumbs.db
-.DS_Store
-/src/__pycache__
+tqdm.py/

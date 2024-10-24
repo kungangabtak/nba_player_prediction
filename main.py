@@ -2,7 +2,7 @@
 
 import argparse
 import datetime
-from tqdm import tqdm
+from tqdm.auto import tqdm  # Changed import to avoid import issues
 from src import utils, model_training, data_collection, feature_engineering, data_preprocessing
 import pandas as pd
 import logging
