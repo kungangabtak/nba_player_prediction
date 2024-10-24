@@ -7,6 +7,7 @@ from sklearn.feature_selection import RFE
 from xgboost import XGBRegressor
 from sklearn.preprocessing import LabelEncoder
 import re
+from nba_api.stats.static import teams  # Import to get all NBA teams
 
 def extract_opponent_team(row, player_team_map):
     """
@@ -24,9 +25,9 @@ def extract_opponent_team(row, player_team_map):
     if not player_team:
         logging.warning(f"Player ID {player_id} not found in players_df.")
         return np.nan
-    matchup = row['MATCHUP']
-    if pd.isna(matchup):
-        logging.warning(f"MATCHUP is NaN for Player ID {player_id}.")
+    matchup = row.get('MATCHUP', None)
+    if not matchup or pd.isna(matchup):
+        logging.warning(f"MATCHUP is missing or NaN for Player ID {player_id}.")
         return np.nan
     # MATCHUP format can be 'TEAM vs. OPPONENT' or 'TEAM @ OPPONENT'
     try:
@@ -60,6 +61,16 @@ def engineer_features(df, players_df):
     Returns:
         tuple: (Processed DataFrame, Fitted LabelEncoder)
     """
+    # Check if df is empty
+    if df.empty:
+        logging.error("Input DataFrame is empty. Cannot engineer features.")
+        return pd.DataFrame(), None
+
+    # Check if 'MATCHUP' column exists
+    if 'MATCHUP' not in df.columns:
+        logging.error("'MATCHUP' column is missing from game logs.")
+        return pd.DataFrame(), None
+
     # Log the initial columns
     logging.debug(f"Initial gamelog columns: {df.columns.tolist()}")
 
@@ -103,9 +114,22 @@ def engineer_features(df, players_df):
     # Ensure Opponent_Team is string type
     df['Opponent_Team'] = df['Opponent_Team'].astype(str)
 
-    # Initialize and fit LabelEncoder for Opponent_Team
+    # Get all NBA team abbreviations
+    all_teams = teams.get_teams()
+    team_abbreviations = [team['abbreviation'] for team in all_teams]
+
+    # Initialize and fit LabelEncoder for Opponent_Team with all NBA teams
     label_encoder = LabelEncoder()
-    df['Opponent_Team_Encoded'] = label_encoder.fit_transform(df['Opponent_Team'])
+    label_encoder.fit(team_abbreviations)
+
+    # Transform Opponent_Team using the fitted LabelEncoder
+    try:
+        df['Opponent_Team_Encoded'] = label_encoder.transform(df['Opponent_Team'])
+    except ValueError as e:
+        # Handle unknown teams (should not occur if all teams are included)
+        logging.error(f"Error encoding Opponent_Team: {e}")
+        # Assign -1 to unknown teams
+        df['Opponent_Team_Encoded'] = -1
 
     # Create ratio features
     df['FG3A_FGA_RATIO'] = df['FG3A'] / df['FGA'].replace(0, np.nan)
@@ -122,39 +146,26 @@ def engineer_features(df, players_df):
         - df['TOV']
     )
 
-    # Drop 'GAME_DATE' or any other non-numeric columns if present
-    non_numeric_cols = df.select_dtypes(exclude=['number', 'object']).columns.tolist()
-    if 'GAME_DATE' in non_numeric_cols:
-        df = df.drop(columns=['GAME_DATE'])
-        logging.info("Dropped 'GAME_DATE' column.")
-
-    # Drop 'PLAYER_NAME' if present
-    if 'PLAYER_NAME' in df.columns:
-        df = df.drop(columns=['PLAYER_NAME'])
-        logging.info("Dropped 'PLAYER_NAME' column.")
-
     # Compute Usage Rate
     df['Usage_Rate'] = (df['FGA'] + 0.44 * df['FTA'] + df['TOV']) / df['Minutes_Played'].replace(0, np.nan)
     df['Usage_Rate'] = df['Usage_Rate'].fillna(0)
 
-    # Select features for Recursive Feature Elimination
-    selected_feature_names = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
-                              'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY', 'Opponent_Team_Encoded']
+    # Handle missing numeric features
+    numeric_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
+                        'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
+    for feature in numeric_features:
+        if feature not in df.columns:
+            logging.warning(f"Numeric feature '{feature}' is missing. Filling with 0.")
+            df[feature] = 0
 
-    # Check if all selected features are present
-    missing_feature_selection_cols = [col for col in selected_feature_names if col not in df.columns]
-    if missing_feature_selection_cols:
-        logging.warning(f"The following feature selection columns are missing: {missing_feature_selection_cols}. Filling them with 0.")
-        for col in missing_feature_selection_cols:
-            df[col] = 0
+    # Handle missing values in numeric features
+    df[numeric_features] = df[numeric_features].fillna(0)
+
+    # Select features for Recursive Feature Elimination
+    selected_feature_names = numeric_features + ['Opponent_Team_Encoded']
 
     features = df[selected_feature_names]
     target = df['PTS']
-
-    # Handle missing values
-    if features.isnull().any().any():
-        logging.warning("Missing values detected in features. Filling with 0.")
-        features = features.fillna(0)
 
     # Feature Selection using Recursive Feature Elimination
     model = XGBRegressor(n_estimators=100, random_state=42)

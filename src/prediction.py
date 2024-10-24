@@ -4,6 +4,8 @@ import joblib
 import os
 import logging
 import pandas as pd
+from nba_api.stats.static import teams  # Import to get all NBA teams
+from sklearn.preprocessing import LabelEncoder
 
 class ModelManager:
     def __init__(self):
@@ -62,6 +64,18 @@ class ModelManager:
         # Load necessary encoders and scalers
         self.load_label_encoder()
         self.load_scaler()
+
+        # Get all NBA team abbreviations
+        all_teams = teams.get_teams()
+        team_abbreviations = [team['abbreviation'] for team in all_teams]
+
+        # Ensure the opponent team abbreviation is in uppercase
+        opponent = opponent.upper()
+
+        # Check if opponent is a valid NBA team
+        if opponent not in team_abbreviations:
+            logging.error(f"Opponent team '{opponent}' is not a valid NBA team abbreviation.")
+            raise ValueError(f"Opponent team '{opponent}' is not a valid NBA team abbreviation.")
 
         try:
             opponent_encoded = self.label_encoder.transform([opponent])[0]

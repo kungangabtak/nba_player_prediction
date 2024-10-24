@@ -2,11 +2,11 @@
 
 import logging
 import sys
+import time
 from nba_api.stats.endpoints import commonallplayers, playergamelog
 from tqdm import tqdm
 import pandas as pd
 from src.feature_engineering import engineer_features
-from src.utils import get_player_id, get_full_team_name
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 from xgboost import XGBRegressor, XGBClassifier
@@ -27,12 +27,12 @@ def setup_logging():
         ]
     )
 
-def fetch_players(season='2024-25'):
+def fetch_players(season='2022-23'):
     """
     Fetches all players for the specified NBA season.
 
     Parameters:
-        season (str): The NBA season (e.g., '2024-25').
+        season (str): The NBA season (e.g., '2022-23').
 
     Returns:
         pd.DataFrame: DataFrame containing all players.
@@ -66,13 +66,13 @@ def filter_players(players_df, team_abbreviations):
     logging.info(f"Number of players after filtering: {len(filtered_players)}")
     return filtered_players
 
-def fetch_game_logs(filtered_players, season='2024-25'):
+def fetch_game_logs(filtered_players, season='2022-23'):
     """
     Fetches game logs for each player in the filtered players DataFrame.
 
     Parameters:
         filtered_players (pd.DataFrame): DataFrame containing filtered players.
-        season (str): The NBA season (e.g., '2024-25').
+        season (str): The NBA season (e.g., '2022-23').
 
     Returns:
         pd.DataFrame: Concatenated DataFrame of all fetched game logs.
@@ -82,21 +82,32 @@ def fetch_game_logs(filtered_players, season='2024-25'):
         player_id = row['PERSON_ID']
         player_name = row['DISPLAY_FIRST_LAST']
         logging.debug(f"Fetching game logs for player {player_name} (ID: {player_id})")
-        try:
-            gamelog = playergamelog.PlayerGameLog(
-                player_id=player_id,
-                season=season,
-                season_type_all_star='Regular Season'
-            ).get_data_frames()[0]
-            if gamelog.empty:
-                logging.warning(f"No game log data for player ID {player_id}. Skipping.")
-                continue
+        gamelog = None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                gamelog = playergamelog.PlayerGameLog(
+                    player_id=player_id,
+                    season=season,
+                    season_type_all_star='Regular Season',
+                    timeout=60  # Increase timeout to 60 seconds
+                ).get_data_frames()[0]
+                if gamelog.empty:
+                    logging.warning(f"No game log data for player ID {player_id}. Skipping.")
+                    gamelog = None
+                break  # If successful, exit the retry loop
+            except Exception as e:
+                logging.error(f"Error fetching game log for player ID {player_id}: {e}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Retrying in 5 seconds... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(5)
+                else:
+                    logging.error(f"Failed to fetch game log for player ID {player_id} after {max_retries} attempts.")
+                    gamelog = None
+        if gamelog is not None:
             gamelog['PLAYER_NAME'] = player_name
             all_game_logs.append(gamelog)
             logging.info(f"Successfully fetched data for player ID {player_id}.")
-        except Exception as e:
-            logging.error(f"Error fetching game log for player ID {player_id}: {e}")
-            continue
     if not all_game_logs:
         logging.error("No game logs fetched for any players.")
         return pd.DataFrame()
@@ -185,14 +196,21 @@ def main():
     # Define the teams to filter
     teams_to_filter = ['LAL', 'BOS']
 
+    # Set the season to a completed season with available data
+    season = '2022-23'
+
     # Fetch all players for the season
-    players_all = fetch_players()
+    players_all = fetch_players(season=season)
 
     # Filter players by team
     filtered_players = filter_players(players_all, teams_to_filter)
 
+    if filtered_players.empty:
+        logging.error("No players found after filtering. Exiting the program.")
+        sys.exit(1)
+
     # Fetch game logs for filtered players
-    all_game_logs = fetch_game_logs(filtered_players)
+    all_game_logs = fetch_game_logs(filtered_players, season=season)
 
     if all_game_logs.empty:
         logging.error("No game logs were fetched. Exiting the program.")
