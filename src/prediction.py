@@ -1,16 +1,16 @@
 # src/prediction.py
 
-import pickle
+import joblib  # Changed from pickle to joblib
 import os
 import logging
 
 class ModelManager:
     def __init__(self):
         self.models_dir = 'models'
-        self.regressor_path = os.path.join(self.models_dir, 'XGBoostRegressor.pkl')
-        self.classifier_path = os.path.join(self.models_dir, 'XGBoostClassifier.pkl')
-        self.scaler_path = os.path.join(self.models_dir, 'scaler.pkl')
-        self.label_encoder_path = os.path.join(self.models_dir, 'label_encoder.pkl')
+        self.regressor_path = os.path.join(self.models_dir, 'XGBoostRegressor.joblib')  # Updated extension
+        self.classifier_path = os.path.join(self.models_dir, 'XGBoostClassifier.joblib')  # Updated extension
+        self.scaler_path = os.path.join(self.models_dir, 'scaler.joblib')  # Updated extension
+        self.label_encoder_path = os.path.join(self.models_dir, 'label_encoder.joblib')  # Updated extension
         self.scaler = None
         self.label_encoder = None
 
@@ -26,13 +26,9 @@ class ModelManager:
             raise FileNotFoundError(f"Model file {path} does not exist.")
 
         try:
-            with open(path, 'rb') as file:
-                model = pickle.load(file)
-        except pickle.UnpicklingError as e:
-            logging.error(f"Error unpickling the {model_type} model from {path}: {e}")
-            raise
+            model = joblib.load(path)
         except Exception as e:
-            logging.error(f"Unexpected error loading {model_type} model from {path}: {e}")
+            logging.error(f"Error loading {model_type} model from {path}: {e}")
             raise
         return model
 
@@ -41,13 +37,9 @@ class ModelManager:
             if not os.path.exists(self.scaler_path):
                 raise FileNotFoundError(f"Scaler file {self.scaler_path} does not exist.")
             try:
-                with open(self.scaler_path, 'rb') as file:
-                    self.scaler = pickle.load(file)
-            except pickle.UnpicklingError as e:
-                logging.error(f"Error unpickling the scaler from {self.scaler_path}: {e}")
-                raise
+                self.scaler = joblib.load(self.scaler_path)
             except Exception as e:
-                logging.error(f"Unexpected error loading scaler from {self.scaler_path}: {e}")
+                logging.error(f"Error loading scaler from {self.scaler_path}: {e}")
                 raise
         return self.scaler
 
@@ -56,13 +48,9 @@ class ModelManager:
             if not os.path.exists(self.label_encoder_path):
                 raise FileNotFoundError(f"Label encoder file {self.label_encoder_path} does not exist.")
             try:
-                with open(self.label_encoder_path, 'rb') as file:
-                    self.label_encoder = pickle.load(file)
-            except pickle.UnpicklingError as e:
-                logging.error(f"Error unpickling the label encoder from {self.label_encoder_path}: {e}")
-                raise
+                self.label_encoder = joblib.load(self.label_encoder_path)
             except Exception as e:
-                logging.error(f"Unexpected error loading label encoder from {self.label_encoder_path}: {e}")
+                logging.error(f"Error loading label encoder from {self.label_encoder_path}: {e}")
                 raise
         return self.label_encoder
 

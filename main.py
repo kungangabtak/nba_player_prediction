@@ -1,166 +1,206 @@
 # main.py
 
-import argparse
-import datetime
-from tqdm.auto import tqdm  # Changed import to avoid import issues
-from src import utils, model_training, data_collection, feature_engineering, data_preprocessing
-import pandas as pd
 import logging
-import time
-from nba_api.stats.static import teams
+import sys
+from nba_api.stats.static import players
+from nba_api.stats.endpoints import commonallplayers, playergamelog
+from tqdm import tqdm
+import pandas as pd
+from src.feature_engineering import engineer_features
+from src.utils import get_player_id, get_full_team_name
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split
+from xgboost import XGBRegressor, XGBClassifier
+import joblib
+import os
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+def setup_logging():
+    """
+    Configures the logging settings for the script.
+    Logs are output to both the console and a file named 'training.log'.
+    """
+    logging.basicConfig(
+        level=logging.DEBUG,  # Set to INFO or WARNING in production
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler("training.log")
+        ]
+    )
+
+def fetch_players(season='2024-25'):
+    """
+    Fetches all players for the specified NBA season.
+
+    Parameters:
+        season (str): The NBA season (e.g., '2024-25').
+
+    Returns:
+        pd.DataFrame: DataFrame containing all players.
+    """
+    logging.info(f"Starting data collection for the {season} season.")
+    try:
+        players_all = commonallplayers.CommonAllPlayers(
+            is_only_current_season=0,
+            league_id='00',
+            season=season
+        ).get_data_frames()[0]
+        logging.info(f"Retrieved {len(players_all)} players for the {season} season.")
+        return players_all
+    except Exception as e:
+        logging.error(f"Error fetching players for season {season}: {e}")
+        sys.exit(1)
+
+def filter_players(players_df, team_abbreviations):
+    """
+    Filters players based on the specified team abbreviations.
+
+    Parameters:
+        players_df (pd.DataFrame): DataFrame containing all players.
+        team_abbreviations (list): List of team abbreviations to filter by (e.g., ['LAL', 'BOS']).
+
+    Returns:
+        pd.DataFrame: DataFrame containing filtered players.
+    """
+    logging.info(f"Filtering players from teams: {team_abbreviations}")
+    filtered_players = players_df[players_df['TEAM_ABBREVIATION'].isin(team_abbreviations)]
+    logging.info(f"Number of players after filtering: {len(filtered_players)}")
+    return filtered_players
+
+def fetch_game_logs(filtered_players, season='2024-25'):
+    """
+    Fetches game logs for each player in the filtered players DataFrame.
+
+    Parameters:
+        filtered_players (pd.DataFrame): DataFrame containing filtered players.
+        season (str): The NBA season (e.g., '2024-25').
+
+    Returns:
+        pd.DataFrame: Concatenated DataFrame of all fetched game logs.
+    """
+    all_game_logs = []
+    for index, row in tqdm(filtered_players.iterrows(), total=filtered_players.shape[0], desc="Fetching game logs"):
+        player_id = row['PERSON_ID']
+        player_name = row['DISPLAY_FIRST_LAST']
+        logging.debug(f"Fetching game logs for player {player_name} (ID: {player_id})")
+        try:
+            gamelog = playergamelog.PlayerGameLog(
+                player_id=player_id,
+                season=season,
+                season_type_all_star='Regular Season'
+            ).get_data_frames()[0]
+            if gamelog.empty:
+                logging.warning(f"No game log data for player ID {player_id}. Skipping.")
+                continue
+            gamelog['PLAYER_NAME'] = player_name
+            all_game_logs.append(gamelog)
+            logging.info(f"Successfully fetched data for player ID {player_id}.")
+        except Exception as e:
+            logging.error(f"Error fetching game log for player ID {player_id}: {e}")
+            continue
+    if not all_game_logs:
+        logging.error("No game logs fetched for any players.")
+        return pd.DataFrame()
+    else:
+        logging.info(f"Fetched game logs for {len(all_game_logs)} players.")
+        return pd.concat(all_game_logs, ignore_index=True)
+
+def train_and_save_models(processed_data, label_encoder, models_dir='models'):
+    """
+    Trains machine learning models and saves them along with encoders and scalers.
+
+    Parameters:
+        processed_data (pd.DataFrame): DataFrame containing processed features and target.
+        label_encoder (LabelEncoder): Fitted LabelEncoder for Opponent_Team.
+        models_dir (str): Directory to save the trained models and preprocessors.
+    """
+    if processed_data.empty:
+        logging.error("No data collected after processing filtered players. Exiting the program.")
+        sys.exit(1)
+    
+    logging.info("Starting feature scaling.")
+
+    # Initialize StandardScaler for numerical features
+    scaler = StandardScaler()
+    numeric_features = ['FG_Percentage', 'FT_Percentage', 'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
+    # Ensure that all numeric features exist
+    for feature in numeric_features:
+        if feature not in processed_data.columns:
+            logging.warning(f"Numeric feature '{feature}' is missing. Filling with 0.")
+            processed_data[feature] = 0
+    processed_data[numeric_features] = scaler.fit_transform(processed_data[numeric_features])
+    
+    # Split data into features and target
+    X = processed_data[['FG_Percentage', 'FT_Percentage', 'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY', 'Opponent_Team']]
+    y = processed_data['PTS']
+    
+    # Split into train and test sets for regression
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    logging.info("Training XGBoost Regressor.")
+    regressor = XGBRegressor(n_estimators=100, random_state=42)
+    regressor.fit(X_train, y_train)
+    logging.info("XGBoost Regressor training completed.")
+    
+    # For classification, define a target (e.g., PTS > median as binary classification)
+    y_class = (y > y.median()).astype(int)
+    X_train_cls, X_test_cls, y_train_cls, y_test_cls = train_test_split(
+        X, y_class, test_size=0.2, random_state=42
+    )
+    
+    logging.info("Training XGBoost Classifier.")
+    classifier = XGBClassifier(n_estimators=100, random_state=42)
+    classifier.fit(X_train_cls, y_train_cls)
+    logging.info("XGBoost Classifier training completed.")
+    
+    # Create models directory if it doesn't exist
+    os.makedirs(models_dir, exist_ok=True)
+    
+    # Save models and preprocessors
+    try:
+        joblib.dump(regressor, os.path.join(models_dir, 'XGBoostRegressor.joblib'))
+        joblib.dump(classifier, os.path.join(models_dir, 'XGBoostClassifier.joblib'))
+        joblib.dump(label_encoder, os.path.join(models_dir, 'label_encoder.joblib'))
+        joblib.dump(scaler, os.path.join(models_dir, 'scaler.joblib'))
+        logging.info(f"Models and preprocessors saved in '{models_dir}' directory.")
+    except Exception as e:
+        logging.error(f"Error saving models: {e}")
+        sys.exit(1)
 
 def main():
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='NBA Player Performance Prediction Model')
-    parser.add_argument('--season', type=str, help='Season in format YYYY-YY', default=None)
-    parser.add_argument('--teams', type=str, nargs='+', help='Team abbreviations to include', default=['LAL', 'BOS'])
-    args = parser.parse_args()
-
-    # Dynamic Season Input
-    if args.season:
-        season = args.season
-    else:
-        current_year = datetime.datetime.now().year
-        current_month = datetime.datetime.now().month
-        if current_month >= 10:  # NBA season typically starts in October
-            # Set to current season (e.g., 2024-25)
-            season = f"{current_year}-{str(current_year+1)[-2:]}"
-        else:
-            # Set to previous season (e.g., 2023-24)
-            season = f"{current_year-1}-{str(current_year)[-2:]}"
-
-    teams_to_include = args.teams
-    logging.info(f"Filtering players from teams: {teams_to_include}")
-
-    logging.info(f"Starting data collection for the {season} season.")
-
-    players = data_collection.get_all_players(season)
-    if players.empty:
-        logging.error("No players retrieved for the specified season. Exiting the program.")
-        return
-
-    # Verify the available columns and unique team abbreviations
-    logging.info(f"Available columns in players DataFrame: {players.columns.tolist()}")
-
-    if 'TEAM_ABBREVIATION' not in players.columns:
-        logging.error("Column 'TEAM_ABBREVIATION' not found in players DataFrame.")
-        logging.info("Available team abbreviations:")
-        for team in teams.get_teams():
-            logging.info(f"{team['abbreviation']} - {team['full_name']}")
-        return
-
-    unique_teams = players['TEAM_ABBREVIATION'].unique()
-    logging.info(f"Unique TEAM_ABBREVIATION values: {unique_teams}")
-
-    # Filter players belonging to the specified teams
-    players_filtered = players[players['TEAM_ABBREVIATION'].isin(teams_to_include)]
-    logging.info(f"Number of players after filtering: {len(players_filtered)}")
-
-    if players_filtered.empty:
-        logging.error(f"No players found for the specified teams: {teams_to_include}")
-        return
-
-    all_data = pd.DataFrame()
-    skipped_players = []
-
-    player_ids = players_filtered['PERSON_ID'].dropna().unique().tolist()
-    gamelogs = data_collection.get_all_player_data(player_ids, season)
-
-    for player_id, gamelog in tqdm(zip(player_ids, gamelogs), total=len(player_ids), desc="Processing Gamelogs"):
-        if gamelog.empty:
-            logging.warning(f"No game log data for player ID {player_id}. Skipping.")
-            skipped_players.append(player_id)
-            continue
-
-        # Retrieve player name using player_id
-        player_name_series = players_filtered.loc[players_filtered['PERSON_ID'] == player_id, 'DISPLAY_FIRST_LAST']
-        if player_name_series.empty:
-            logging.warning(f"Player name not found for player ID {player_id}. Skipping.")
-            skipped_players.append(player_id)
-            continue
-        player_name = player_name_series.values[0]
-
-        # Log the columns of the gamelog for debugging
-        logging.debug(f"Gamelog columns for player {player_name} (ID: {player_id}): {gamelog.columns.tolist()}")
-
-        # Check if 'PTS' exists in gamelog
-        if 'PTS' not in gamelog.columns:
-            logging.warning(f"Player {player_name} (ID: {player_id}) gamelog is missing 'PTS' column. Available columns: {gamelog.columns.tolist()}. Skipping.")
-            skipped_players.append(player_name)
-            continue
-
-        try:
-            gamelog = feature_engineering.engineer_features(gamelog)
-            # No need to rename 'PTS' to 'PTS' again since it's already handled in feature engineering
-
-            # Verify 'PTS' exists after feature engineering
-            if 'PTS' not in gamelog.columns:
-                logging.warning(f"After feature engineering, 'PTS' column missing for player: {player_name}. Available columns: {gamelog.columns.tolist()}. Skipping.")
-                skipped_players.append(player_name)
-                continue
-
-            # Drop all non-numeric columns
-            non_numeric_cols = gamelog.select_dtypes(exclude=['number']).columns.tolist()
-            logging.debug(f"Dropping non-numeric columns: {non_numeric_cols}")
-            gamelog = gamelog.drop(columns=non_numeric_cols, errors='ignore')
-
-            # Ensure required features are present
-            required_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
-                                 'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY', 'Opponent_Team']
-            missing_features = [feat for feat in required_features if feat not in gamelog.columns]
-            if missing_features:
-                logging.warning(f"Gamelog for player {player_name} is missing features: {missing_features}. Filling them with 0.")
-                for feat in missing_features:
-                    gamelog[feat] = 0
-
-            all_data = pd.concat([all_data, gamelog], ignore_index=True)
-            logging.info(f"Data appended for player: {player_name}")
-        except KeyError as e:
-            logging.error(f"Key error while processing data for player: {player_name} - Missing column: {e}")
-            skipped_players.append(player_name)
-        except Exception as e:
-            logging.error(f"Unexpected error for player: {player_name} - {e}")
-            skipped_players.append(player_name)
-
-        # Optional: Sleep to respect API rate limits
-        time.sleep(0.5)  # Adjust delay as needed
-
-    if all_data.empty:
-        logging.error("No data collected after processing filtered players. Exiting the program.")
-        return
-
-    logging.info("Sample data before cleaning:")
-    logging.info(all_data.head())
-    logging.info(f"Data types before cleaning:\n{all_data.dtypes}")
-
-    logging.info("Cleaning and preprocessing the collected data.")
-    all_data = data_preprocessing.clean_data(all_data)
-    logging.info("Sample data after cleaning:")
-    logging.info(all_data.head())
-
-    # Verify that no non-numeric columns remain
-    non_numeric_after = all_data.select_dtypes(exclude=['number']).columns.tolist()
-    if non_numeric_after:
-        logging.error(f"Non-numeric columns still present after cleaning: {non_numeric_after}")
-    else:
-        logging.info("No non-numeric columns present after cleaning.")
-
-    logging.info("Starting model training.")
-    try:
-        reg_model, clf_model, scaler, label_encoder = model_training.build_and_train_models(all_data, threshold=20)
-        logging.info("Models trained and saved successfully.")
-    except KeyError as e:
-        logging.error(f"Model training failed due to missing features: {e}")
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during model training: {e}")
-
-    if skipped_players:
-        logging.info(f"Skipped {len(skipped_players)} players due to errors:")
-        for player in skipped_players:
-            logging.info(f"- {player}")
+    """
+    The main function orchestrates the data fetching, processing, model training, and saving.
+    """
+    setup_logging()
+    
+    # Define the teams to filter
+    teams_to_filter = ['LAL', 'BOS']
+    
+    # Fetch all players for the season
+    players_all = fetch_players()
+    
+    # Filter players by team
+    filtered_players = filter_players(players_all, teams_to_filter)
+    
+    # Fetch game logs for filtered players
+    all_game_logs = fetch_game_logs(filtered_players)
+    
+    if all_game_logs.empty:
+        logging.error("No game logs were fetched. Exiting the program.")
+        sys.exit(1)
+    
+    # Process game logs with feature engineering
+    # Ensure that 'players_df' passed to engineer_features contains necessary information
+    processed_data, label_encoder = engineer_features(all_game_logs, filtered_players)
+    
+    if processed_data.empty or label_encoder is None:
+        logging.error("Feature engineering failed. Exiting the program.")
+        sys.exit(1)
+    
+    # Train models and save them
+    train_and_save_models(processed_data, label_encoder)
 
 if __name__ == "__main__":
     main()

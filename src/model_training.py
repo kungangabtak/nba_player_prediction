@@ -1,7 +1,7 @@
 # src/model_training.py
 
 import pandas as pd
-import pickle
+import joblib  # Changed from pickle to joblib
 import os
 from xgboost import XGBClassifier, XGBRegressor
 from sklearn.model_selection import train_test_split, GridSearchCV
@@ -126,15 +126,10 @@ def build_and_train_models(data, threshold=20):
     with open(os.path.join('models', 'classification_report.txt'), 'w') as f:
         f.write(classification_report(y_clf_test, clf_pred))
 
-    # Save models, scaler, and label encoder
-    os.makedirs('models', exist_ok=True)
-    with open(os.path.join('models', 'XGBoostRegressor.pkl'), 'wb') as f:
-        pickle.dump(best_reg_model, f)
-    with open(os.path.join('models', 'XGBoostClassifier.pkl'), 'wb') as f:
-        pickle.dump(best_clf_model, f)
-    with open(os.path.join('models', 'scaler.pkl'), 'wb') as f:
-        pickle.dump(scaler, f)
-    with open(os.path.join('models', 'label_encoder.pkl'), 'wb') as f:
-        pickle.dump(label_encoder, f)
+    # Save models, scaler, and label encoder using joblib
+    joblib.dump(best_reg_model, os.path.join('models', 'XGBoostRegressor.joblib'))
+    joblib.dump(best_clf_model, os.path.join('models', 'XGBoostClassifier.joblib'))
+    joblib.dump(scaler, os.path.join('models', 'scaler.joblib'))
+    joblib.dump(label_encoder, os.path.join('models', 'label_encoder.joblib'))
 
     return best_reg_model, best_clf_model, scaler, label_encoder

@@ -4,7 +4,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 import pandas as pd
 from nba_api.stats.endpoints import commonplayerinfo, playergamelog, commonallplayers
 from nba_api.stats.static import teams
-import pickle
+import joblib
 import os
 import logging
 from functools import lru_cache
@@ -32,27 +32,8 @@ def load_team_dict():
     return teams.get_teams()
 
 def get_full_team_name(abbreviation):
-    team_dict = load_team_dict()
+    team_dict = teams.get_teams()
     for team in team_dict:
         if team['abbreviation'] == abbreviation:
             return team['full_name']
     return None
-
-def fetch_player_data(player_id, season, opponent_team=None):
-    gamelog = playergamelog.PlayerGameLog(
-        player_id=player_id,
-        season=season,
-        season_type_all_star='Regular Season'
-    ).get_data_frames()[0]
-    
-    if opponent_team:
-        gamelog = gamelog[gamelog['MATCHUP'].str.contains(opponent_team)]
-    
-    return gamelog
-
-def get_opponent_teams(player_id, season, gamelogs_df):
-    gamelog = fetch_player_data(player_id, season)
-    if gamelog.empty:
-        return []
-    opponents = gamelogs_df['Opponent_Team'].unique().tolist()
-    return opponents

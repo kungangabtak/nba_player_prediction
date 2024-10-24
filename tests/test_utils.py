@@ -32,7 +32,7 @@ def load_team_dict():
     return teams.get_teams()
 
 def get_full_team_name(abbreviation):
-    team_dict = load_team_dict()
+    team_dict = teams.get_teams()
     for team in team_dict:
         if team['abbreviation'] == abbreviation:
             return team['full_name']
