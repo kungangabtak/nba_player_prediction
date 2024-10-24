@@ -9,33 +9,31 @@ from sklearn.preprocessing import LabelEncoder
 import re
 from nba_api.stats.static import teams  # Import to get all NBA teams
 
-def extract_opponent_team(row, player_team_map):
+def extract_opponent_team(row):
     """
-    Extracts the Opponent_Team from the MATCHUP column.
+    Extracts the Opponent_Team from the MATCHUP column using the TEAM_ABBREVIATION from the game log.
 
     Parameters:
-        row (pd.Series): A row from the DataFrame containing 'MATCHUP' and 'Player_ID'.
-        player_team_map (dict): A dictionary mapping Player_ID to TEAM_ABBREVIATION.
+        row (pd.Series): A row from the DataFrame containing 'MATCHUP', 'TEAM_ABBREVIATION', and 'PLAYER_ID'.
 
     Returns:
         str or np.nan: The opponent team's abbreviation if successfully extracted, else np.nan.
     """
-    player_id = row['Player_ID']
-    player_team = player_team_map.get(player_id, None)
-    if not player_team:
-        logging.warning(f"Player ID {player_id} not found in players_df.")
+    player_team = row.get('TEAM_ABBREVIATION', None)
+    if not player_team or pd.isna(player_team):
+        logging.warning(f"TEAM_ABBREVIATION is missing or NaN for Player ID {row.get('PLAYER_ID', 'Unknown')}.")
         return np.nan
     matchup = row.get('MATCHUP', None)
     if not matchup or pd.isna(matchup):
-        logging.warning(f"MATCHUP is missing or NaN for Player ID {player_id}.")
+        logging.warning(f"MATCHUP is missing or NaN for Player ID {row.get('PLAYER_ID', 'Unknown')}.")
         return np.nan
-    # MATCHUP format can be 'TEAM vs. OPPONENT' or 'TEAM @ OPPONENT'
+    # MATCHUP format can be 'TEAM_ABBR vs. OPPONENT_ABBR' or 'TEAM_ABBR @ OPPONENT_ABBR'
     try:
         # Use regular expressions to parse the matchup
         pattern = r'^(?P<team>\w{3})\s+(vs\.?|@)\s+(?P<opponent>\w{3})$'
         match = re.match(pattern, matchup.strip())
         if not match:
-            logging.warning(f"Unexpected MATCHUP format: {matchup} for Player ID {player_id}.")
+            logging.warning(f"Unexpected MATCHUP format: {matchup} for Player ID {row.get('PLAYER_ID', 'Unknown')}.")
             return np.nan
         team = match.group('team')
         opponent = match.group('opponent')
@@ -44,10 +42,10 @@ def extract_opponent_team(row, player_team_map):
         elif opponent == player_team:
             return team
         else:
-            logging.warning(f"Player team {player_team} not found in MATCHUP: {matchup}.")
+            logging.warning(f"Player team {player_team} not found in MATCHUP: {matchup} for Player ID {row.get('PLAYER_ID', 'Unknown')}.")
             return np.nan
     except Exception as e:
-        logging.error(f"Error parsing MATCHUP '{matchup}' for Player ID {player_id}: {e}")
+        logging.error(f"Error parsing MATCHUP '{matchup}' for Player ID {row.get('PLAYER_ID', 'Unknown')}: {e}")
         return np.nan
 
 def engineer_features(df, players_df):
@@ -66,9 +64,11 @@ def engineer_features(df, players_df):
         logging.error("Input DataFrame is empty. Cannot engineer features.")
         return pd.DataFrame(), None
 
-    # Check if 'MATCHUP' column exists
-    if 'MATCHUP' not in df.columns:
-        logging.error("'MATCHUP' column is missing from game logs.")
+    # Check if required columns exist
+    required_columns = ['MATCHUP', 'TEAM_ABBREVIATION', 'PLAYER_ID']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        logging.error(f"Missing columns in game logs: {missing_columns}")
         return pd.DataFrame(), None
 
     # Log the initial columns
@@ -89,7 +89,8 @@ def engineer_features(df, players_df):
         'FTA': 'FTA',
         'FTM': 'FTM',
         'TOV': 'TOV',
-        'PTS': 'PTS'
+        'PTS': 'PTS',
+        'FG3A': 'FG3A'
     }
 
     # Perform the renaming
@@ -98,11 +99,8 @@ def engineer_features(df, players_df):
     # Log the columns after renaming
     logging.debug(f"Columns after renaming: {df.columns.tolist()}")
 
-    # Extract Opponent_Team from MATCHUP
-    # First, get player's team abbreviation from players_df
-    player_team_map = players_df.set_index('PERSON_ID')['TEAM_ABBREVIATION'].to_dict()
-
-    df['Opponent_Team'] = df.apply(extract_opponent_team, axis=1, args=(player_team_map,))
+    # Extract Opponent_Team from MATCHUP using the TEAM_ABBREVIATION from game logs
+    df['Opponent_Team'] = df.apply(extract_opponent_team, axis=1)
 
     # Drop rows where Opponent_Team could not be extracted
     initial_length = len(df)
@@ -151,7 +149,7 @@ def engineer_features(df, players_df):
     df['Usage_Rate'] = df['Usage_Rate'].fillna(0)
 
     # Handle missing numeric features
-    numeric_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
+    numeric_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage',
                         'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
     for feature in numeric_features:
         if feature not in df.columns:

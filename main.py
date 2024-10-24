@@ -2,9 +2,7 @@
 
 import logging
 import sys
-import time
-from nba_api.stats.endpoints import commonallplayers, playergamelog
-from tqdm import tqdm
+from nba_api.stats.endpoints import commonallplayers, leaguegamelog
 import pandas as pd
 from src.feature_engineering import engineer_features
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -27,7 +25,7 @@ def setup_logging():
         ]
     )
 
-def fetch_players(season='2022-23'):
+def fetch_players(season='2023-24'):
     """
     Fetches all players for the specified NBA season.
 
@@ -50,58 +48,29 @@ def fetch_players(season='2022-23'):
         logging.error(f"Error fetching players for season {season}: {e}")
         sys.exit(1)
 
-def fetch_game_logs(players_df, season='2022-23'):
+def fetch_all_game_logs(season='2023-24'):
     """
-    Fetches game logs for each player in the players DataFrame.
+    Fetches game logs for all players in the specified NBA season.
 
     Parameters:
-        players_df (pd.DataFrame): DataFrame containing players.
         season (str): The NBA season (e.g., '2022-23').
 
     Returns:
-        pd.DataFrame: Concatenated DataFrame of all fetched game logs.
+        pd.DataFrame: DataFrame containing game logs for all players.
     """
-    all_game_logs = []
-    total_players = players_df.shape[0]
-    for index, row in tqdm(players_df.iterrows(), total=total_players, desc="Fetching game logs"):
-        player_id = row['PERSON_ID']
-        player_name = row['DISPLAY_FIRST_LAST']
-        logging.debug(f"Fetching game logs for player {player_name} (ID: {player_id})")
-        gamelog = None
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                gamelog = playergamelog.PlayerGameLog(
-                    player_id=player_id,
-                    season=season,
-                    season_type_all_star='Regular Season',
-                    timeout=60  # Increase timeout to 60 seconds
-                ).get_data_frames()[0]
-                if gamelog.empty:
-                    logging.debug(f"No game log data for player ID {player_id}. Skipping.")
-                    gamelog = None
-                break  # If successful, exit the retry loop
-            except Exception as e:
-                logging.error(f"Error fetching game log for player ID {player_id}: {e}")
-                if attempt < max_retries - 1:
-                    logging.info(f"Retrying in 5 seconds... (Attempt {attempt + 1}/{max_retries})")
-                    time.sleep(5)
-                else:
-                    logging.error(f"Failed to fetch game log for player ID {player_id} after {max_retries} attempts.")
-                    gamelog = None
-            # Throttle requests to avoid hitting rate limits
-            time.sleep(0.5)
-        if gamelog is not None:
-            gamelog['PLAYER_NAME'] = player_name
-            gamelog['TEAM_ABBREVIATION'] = row['TEAM_ABBREVIATION']
-            all_game_logs.append(gamelog)
-            logging.debug(f"Successfully fetched data for player ID {player_id}.")
-    if not all_game_logs:
-        logging.error("No game logs fetched for any players.")
-        return pd.DataFrame()
-    else:
-        logging.info(f"Fetched game logs for {len(all_game_logs)} players out of {total_players}.")
-        return pd.concat(all_game_logs, ignore_index=True)
+    logging.info(f"Fetching game logs for all players for the {season} season.")
+    try:
+        gamelog = leaguegamelog.LeagueGameLog(
+            season=season,
+            player_or_team_abbreviation='P',  # 'P' for players, 'T' for teams
+            season_type_all_star='Regular Season'
+        ).get_data_frames()[0]
+        logging.info(f"Retrieved game logs for {len(gamelog)} games.")
+        logging.info(f"Columns in all_game_logs: {gamelog.columns.tolist()}")
+        return gamelog
+    except Exception as e:
+        logging.error(f"Error fetching league game logs: {e}")
+        sys.exit(1)
 
 def train_and_save_models(processed_data, label_encoder, models_dir='models'):
     """
@@ -191,11 +160,16 @@ def main():
         logging.error("No players fetched. Exiting the program.")
         sys.exit(1)
 
-    # Fetch game logs for all players
-    all_game_logs = fetch_game_logs(players_all, season=season)
+    # Fetch game logs for all players using LeagueGameLog endpoint
+    all_game_logs = fetch_all_game_logs(season=season)
 
     if all_game_logs.empty:
         logging.error("No game logs were fetched. Exiting the program.")
+        sys.exit(1)
+
+    # Check if 'TEAM_ABBREVIATION' exists in all_game_logs
+    if 'TEAM_ABBREVIATION' not in all_game_logs.columns:
+        logging.error("'TEAM_ABBREVIATION' column is missing from game logs.")
         sys.exit(1)
 
     # Process game logs with feature engineering
