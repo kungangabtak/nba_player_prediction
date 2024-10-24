@@ -118,3 +118,5 @@ dmypy.json
 # Windows specific
 Thumbs.db
 ehthumbs.db
+.DS_Store
+/src/__pycache__
