@@ -1,39 +1,75 @@
 # src/utils.py
 
-from sklearn.preprocessing import StandardScaler, LabelEncoder
 import pandas as pd
-from nba_api.stats.endpoints import commonplayerinfo, playergamelog, commonallplayers
-from nba_api.stats.static import teams
-import joblib
-import os
 import logging
-from functools import lru_cache
+from nba_api.stats.static import teams
 
-def get_player_id(full_name, players_df):
+def get_player_id(player_name, players_df):
     """
-    Retrieves the PERSON_ID for a given player's full name.
+    Retrieves the player ID for a given player name.
 
     Parameters:
-        full_name (str): The full name of the player (e.g., "LeBron James").
+        player_name (str): Full name of the player (e.g., 'LeBron James').
         players_df (pd.DataFrame): DataFrame containing player information.
 
     Returns:
-        int or None: The PERSON_ID if found, else None.
+        int or None: Player ID if found, else None.
     """
-    matched_players = players_df[players_df['DISPLAY_FIRST_LAST'].str.lower() == full_name.lower()]
-    if not matched_players.empty:
-        if len(matched_players) > 1:
-            logging.warning(f"Multiple players found with the name '{full_name}'. Selecting the first match.")
-        return matched_players.iloc[0]['PERSON_ID']
-    return None
+    try:
+        player_row = players_df[players_df['full_name'].str.lower() == player_name.lower()]
+        if not player_row.empty:
+            player_id = player_row.iloc[0]['id']
+            logging.info(f"Found player ID {player_id} for player '{player_name}'.")
+            return player_id
+        else:
+            logging.warning(f"Player '{player_name}' not found in players DataFrame.")
+            return None
+    except Exception as e:
+        logging.error(f"Error retrieving player ID for '{player_name}': {e}")
+        return None
 
-@lru_cache(maxsize=1)
-def load_team_dict():
-    return teams.get_teams()
+def get_opponent_teams(player_id, season, gamelogs):
+    """
+    Retrieves a list of unique opponent teams the player has faced in the season.
 
-def get_full_team_name(abbreviation):
-    team_dict = teams.get_teams()
-    for team in team_dict:
-        if team['abbreviation'] == abbreviation:
-            return team['full_name']
-    return None
+    Parameters:
+        player_id (int): NBA player ID.
+        season (str): NBA season (e.g., '2023-24').
+        gamelogs (pd.DataFrame): DataFrame of player's game logs.
+
+    Returns:
+        list: List of opponent team abbreviations.
+    """
+    try:
+        # Extract opponent team from MATCHUP column
+        # MATCHUP format: 'TEAM vs. OPPONENT' or 'TEAM @ OPPONENT'
+        opponents = gamelogs['MATCHUP'].apply(lambda x: x.split(' ')[-1] if pd.notnull(x) else None)
+        opponent_abbr = opponents.dropna().unique().tolist()
+        logging.info(f"Player ID {player_id} has faced opponents: {opponent_abbr}")
+        return opponent_abbr
+    except Exception as e:
+        logging.error(f"Error retrieving opponent teams for player ID {player_id}: {e}")
+        return []
+
+def get_full_team_name(team_abbr):
+    """
+    Converts a team abbreviation to its full team name.
+
+    Parameters:
+        team_abbr (str): Team abbreviation (e.g., 'LAL').
+
+    Returns:
+        str or None: Full team name (e.g., 'Los Angeles Lakers') if found, else None.
+    """
+    try:
+        team = teams.find_team_by_abbreviation(team_abbr.upper())
+        if team:
+            full_name = team['full_name']
+            logging.info(f"Converted abbreviation '{team_abbr}' to full team name '{full_name}'.")
+            return full_name
+        else:
+            logging.warning(f"No team found with abbreviation '{team_abbr}'.")
+            return None
+    except Exception as e:
+        logging.error(f"Error converting team abbreviation '{team_abbr}': {e}")
+        return None

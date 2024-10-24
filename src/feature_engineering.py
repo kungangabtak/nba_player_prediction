@@ -6,9 +6,6 @@ import logging
 from sklearn.feature_selection import RFE
 from xgboost import XGBRegressor
 from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-import joblib
 import re
 
 def extract_opponent_team(row, player_team_map):
@@ -20,7 +17,7 @@ def extract_opponent_team(row, player_team_map):
         player_team_map (dict): A dictionary mapping Player_ID to TEAM_ABBREVIATION.
 
     Returns:
-        int or np.nan: The encoded opponent team's label if successfully extracted, else np.nan.
+        str or np.nan: The opponent team's abbreviation if successfully extracted, else np.nan.
     """
     player_id = row['Player_ID']
     player_team = player_team_map.get(player_id, None)
@@ -32,40 +29,22 @@ def extract_opponent_team(row, player_team_map):
         logging.warning(f"MATCHUP is NaN for Player ID {player_id}.")
         return np.nan
     # MATCHUP format can be 'TEAM vs. OPPONENT' or 'TEAM @ OPPONENT'
-    # Use regular expressions to handle various formats
     try:
-        # Pattern to match 'TEAM vs. OPPONENT' or 'TEAM @ OPPONENT' with optional periods
-        pattern = r'^(?P<home_team>\w{3})\s*(vs\.?|@)\s*(?P<away_team>\w{3})$'
+        # Use regular expressions to parse the matchup
+        pattern = r'^(?P<team>\w{3})\s+(vs\.?|@)\s+(?P<opponent>\w{3})$'
         match = re.match(pattern, matchup.strip())
         if not match:
             logging.warning(f"Unexpected MATCHUP format: {matchup} for Player ID {player_id}.")
             return np.nan
-        home_team = match.group('home_team')
-        away_team = match.group('away_team')
-        home_away_indicator = match.group(2)
-
-        # Determine if the player is home or away
-        # Assuming 'vs' implies player is home, '@' implies player is away
-        if home_away_indicator.startswith('vs'):
-            player_is_home = True
-        elif home_away_indicator.startswith('@'):
-            player_is_home = False
+        team = match.group('team')
+        opponent = match.group('opponent')
+        if team == player_team:
+            return opponent
+        elif opponent == player_team:
+            return team
         else:
-            logging.warning(f"Unknown home/away indicator '{home_away_indicator}' in MATCHUP: {matchup} for Player ID {player_id}.")
+            logging.warning(f"Player team {player_team} not found in MATCHUP: {matchup}.")
             return np.nan
-
-        if player_is_home:
-            if player_team != home_team:
-                logging.warning(f"Player team {player_team} does not match home team {home_team} in MATCHUP: {matchup}.")
-                return np.nan
-            opponent = away_team
-        else:
-            if player_team != away_team:
-                logging.warning(f"Player team {player_team} does not match away team {away_team} in MATCHUP: {matchup}.")
-                return np.nan
-            opponent = home_team
-
-        return opponent
     except Exception as e:
         logging.error(f"Error parsing MATCHUP '{matchup}' for Player ID {player_id}: {e}")
         return np.nan
@@ -102,15 +81,6 @@ def engineer_features(df, players_df):
         'PTS': 'PTS'
     }
 
-    # Check if all required columns are present before renaming
-    missing_cols = [orig for orig in rename_dict.keys() if orig not in df.columns]
-    if missing_cols:
-        logging.warning(f"The following expected columns are missing from gamelog: {missing_cols}")
-        # Fill missing numerical columns with 0
-        for col in missing_cols:
-            df[col] = 0
-        logging.info("Filled missing columns with default values (0).")
-
     # Perform the renaming
     df = df.rename(columns=rename_dict)
 
@@ -135,31 +105,16 @@ def engineer_features(df, players_df):
 
     # Initialize and fit LabelEncoder for Opponent_Team
     label_encoder = LabelEncoder()
-    df['Opponent_Team'] = label_encoder.fit_transform(df['Opponent_Team'])
+    df['Opponent_Team_Encoded'] = label_encoder.fit_transform(df['Opponent_Team'])
 
     # Create ratio features
-    if 'FG3A' in df.columns and 'FGA' in df.columns:
-        df['FG3A_FGA_RATIO'] = df['FG3A'] / df['FGA'].replace(0, np.nan)
-        df['FG3A_FGA_RATIO'] = df['FG3A_FGA_RATIO'].fillna(0)
-    else:
-        logging.warning("Columns 'FG3A' or 'FGA' missing. Creating 'FG3A_FGA_RATIO' with default value 0.")
-        df['FG3A_FGA_RATIO'] = 0
+    df['FG3A_FGA_RATIO'] = df['FG3A'] / df['FGA'].replace(0, np.nan)
+    df['FG3A_FGA_RATIO'] = df['FG3A_FGA_RATIO'].fillna(0)
 
-    if 'FTA' in df.columns and 'FGA' in df.columns:
-        df['FT_FG_RATIO'] = df['FTA'] / df['FGA'].replace(0, np.nan)
-        df['FT_FG_RATIO'] = df['FT_FG_RATIO'].fillna(0)
-    else:
-        logging.warning("Columns 'FTA' or 'FGA' missing. Creating 'FT_FG_RATIO' with default value 0.")
-        df['FT_FG_RATIO'] = 0
+    df['FT_FG_RATIO'] = df['FTA'] / df['FGA'].replace(0, np.nan)
+    df['FT_FG_RATIO'] = df['FT_FG_RATIO'].fillna(0)
 
     # Create an efficiency metric
-    required_efficiency_cols = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FGA', 'FGM', 'FTA', 'FTM', 'TOV']
-    missing_efficiency_cols = [col for col in required_efficiency_cols if col not in df.columns]
-    if missing_efficiency_cols:
-        logging.warning(f"The following columns are missing for efficiency calculation: {missing_efficiency_cols}. Filling them with 0.")
-        for col in missing_efficiency_cols:
-            df[col] = 0
-
     df['EFFICIENCY'] = (
         df['PTS'] + df['REB'] + df['AST'] + df['STL'] + df['BLK']
         - (df['FGA'] - df['FGM'])
@@ -179,18 +134,12 @@ def engineer_features(df, players_df):
         logging.info("Dropped 'PLAYER_NAME' column.")
 
     # Compute Usage Rate
-    # Usage Rate Formula:
-    # USG% = 100 * ((FGA + 0.44 * FTA + TOV) * (Team Minutes)) / (Minutes Played * (Team FGA + 0.44 * Team FTA + Team TOV))
-    # Since team stats are not available, we'll approximate Usage Rate as:
-    # USG% = (FGA + 0.44 * FTA + TOV) / Minutes_Played
-
-    # Handle division by zero
     df['Usage_Rate'] = (df['FGA'] + 0.44 * df['FTA'] + df['TOV']) / df['Minutes_Played'].replace(0, np.nan)
     df['Usage_Rate'] = df['Usage_Rate'].fillna(0)
 
     # Select features for Recursive Feature Elimination
     selected_feature_names = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
-                              'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY', 'Opponent_Team']
+                              'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY', 'Opponent_Team_Encoded']
 
     # Check if all selected features are present
     missing_feature_selection_cols = [col for col in selected_feature_names if col not in df.columns]
@@ -202,7 +151,7 @@ def engineer_features(df, players_df):
     features = df[selected_feature_names]
     target = df['PTS']
 
-    # Verify that all required features are present
+    # Handle missing values
     if features.isnull().any().any():
         logging.warning("Missing values detected in features. Filling with 0.")
         features = features.fillna(0)
@@ -216,9 +165,14 @@ def engineer_features(df, players_df):
         logging.error(f"Error during RFE fitting: {ve}")
         return pd.DataFrame(), None
 
-    selected_features = features.columns[fit.support_]
-    df = df[selected_features.tolist() + ['PTS']]
-    logging.info(f"Selected features: {selected_features.tolist()}")
+    selected_features = features.columns[fit.support_].tolist()
+
+    # Ensure 'Opponent_Team_Encoded' is included
+    if 'Opponent_Team_Encoded' not in selected_features:
+        selected_features.append('Opponent_Team_Encoded')
+
+    df = df[selected_features + ['PTS']]
+    logging.info(f"Selected features: {selected_features}")
 
     # Log the final columns after feature selection
     logging.debug(f"Final columns after feature selection: {df.columns.tolist()}")

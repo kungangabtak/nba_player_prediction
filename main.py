@@ -2,7 +2,6 @@
 
 import logging
 import sys
-from nba_api.stats.static import players
 from nba_api.stats.endpoints import commonallplayers, playergamelog
 from tqdm import tqdm
 import pandas as pd
@@ -117,47 +116,55 @@ def train_and_save_models(processed_data, label_encoder, models_dir='models'):
     if processed_data.empty:
         logging.error("No data collected after processing filtered players. Exiting the program.")
         sys.exit(1)
-    
+
     logging.info("Starting feature scaling.")
 
     # Initialize StandardScaler for numerical features
     scaler = StandardScaler()
-    numeric_features = ['FG_Percentage', 'FT_Percentage', 'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
+    numeric_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
+                        'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
+
     # Ensure that all numeric features exist
     for feature in numeric_features:
         if feature not in processed_data.columns:
             logging.warning(f"Numeric feature '{feature}' is missing. Filling with 0.")
             processed_data[feature] = 0
+
     processed_data[numeric_features] = scaler.fit_transform(processed_data[numeric_features])
-    
+
+    # Ensure 'Opponent_Team_Encoded' exists
+    if 'Opponent_Team_Encoded' not in processed_data.columns:
+        logging.error("'Opponent_Team_Encoded' is missing from processed_data after feature engineering.")
+        sys.exit(1)
+
     # Split data into features and target
-    X = processed_data[['FG_Percentage', 'FT_Percentage', 'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY', 'Opponent_Team']]
+    X = processed_data[numeric_features + ['Opponent_Team_Encoded']]
     y = processed_data['PTS']
-    
+
     # Split into train and test sets for regression
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
     )
-    
+
     logging.info("Training XGBoost Regressor.")
     regressor = XGBRegressor(n_estimators=100, random_state=42)
     regressor.fit(X_train, y_train)
     logging.info("XGBoost Regressor training completed.")
-    
+
     # For classification, define a target (e.g., PTS > median as binary classification)
     y_class = (y > y.median()).astype(int)
     X_train_cls, X_test_cls, y_train_cls, y_test_cls = train_test_split(
         X, y_class, test_size=0.2, random_state=42
     )
-    
+
     logging.info("Training XGBoost Classifier.")
     classifier = XGBClassifier(n_estimators=100, random_state=42)
     classifier.fit(X_train_cls, y_train_cls)
     logging.info("XGBoost Classifier training completed.")
-    
+
     # Create models directory if it doesn't exist
     os.makedirs(models_dir, exist_ok=True)
-    
+
     # Save models and preprocessors
     try:
         joblib.dump(regressor, os.path.join(models_dir, 'XGBoostRegressor.joblib'))
@@ -174,31 +181,31 @@ def main():
     The main function orchestrates the data fetching, processing, model training, and saving.
     """
     setup_logging()
-    
+
     # Define the teams to filter
     teams_to_filter = ['LAL', 'BOS']
-    
+
     # Fetch all players for the season
     players_all = fetch_players()
-    
+
     # Filter players by team
     filtered_players = filter_players(players_all, teams_to_filter)
-    
+
     # Fetch game logs for filtered players
     all_game_logs = fetch_game_logs(filtered_players)
-    
+
     if all_game_logs.empty:
         logging.error("No game logs were fetched. Exiting the program.")
         sys.exit(1)
-    
+
     # Process game logs with feature engineering
     # Ensure that 'players_df' passed to engineer_features contains necessary information
     processed_data, label_encoder = engineer_features(all_game_logs, filtered_players)
-    
+
     if processed_data.empty or label_encoder is None:
         logging.error("Feature engineering failed. Exiting the program.")
         sys.exit(1)
-    
+
     # Train models and save them
     train_and_save_models(processed_data, label_encoder)
 

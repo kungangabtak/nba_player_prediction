@@ -1,30 +1,49 @@
 # src/model_training.py
 
 import pandas as pd
-import joblib  # Changed from pickle to joblib
+import joblib
 import os
 from xgboost import XGBClassifier, XGBRegressor
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, r2_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 from nba_api.stats.static import teams
 import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
+from data_preprocessing import clean_data  # Import the clean_data function
 
 def build_and_train_models(data, threshold=20):
-    # Rename columns (handled in feature engineering)
+    # Clean the data
+    data = clean_data(data)
+
+    # Rename columns (ensure that this mapping aligns with your cleaned data)
     data = data.rename(columns={
-        'Minutes_Played': 'Minutes_Played',
-        'FG_Percentage': 'FG_Percentage',
-        'FT_Percentage': 'FT_Percentage',
-        'ThreeP_Percentage': 'ThreeP_Percentage',
-        'Usage_Rate': 'Usage_Rate',
-        'EFFICIENCY': 'EFFICIENCY',
+        'MIN': 'Minutes_Played',
+        'FG_PCT': 'FG_Percentage',
+        'FT_PCT': 'FT_Percentage',
+        'FG3_PCT': 'ThreeP_Percentage',
+        'REB': 'REB',  # Assuming 'REB' is already named correctly
+        'AST': 'AST',
+        'STL': 'STL',
+        'BLK': 'BLK',
+        'FGA': 'FGA',
+        'FGM': 'FGM',
+        'FTA': 'FTA',
+        'FTM': 'FTM',
+        'TOV': 'TOV',
         'PTS': 'PTS',
-        'Opponent_Team': 'Opponent_Team'
+        'MATCHUP': 'Opponent_Team'  # Assuming 'MATCHUP' is the column to extract opponent
     })
+
+    # Extract 'Opponent_Team' from 'MATCHUP'
+    # Assuming 'MATCHUP' is in the format 'TEAM vs. OPPONENT' or 'TEAM @ OPPONENT'
+    data['Opponent_Team'] = data['Opponent_Team'].apply(lambda x: x.split(' ')[-1] if pd.notnull(x) else 'UNK')
+
+    # Handle any unknown opponents
+    data['Opponent_Team'] = data['Opponent_Team'].replace({'UNK': 'NOP'})  # Replace 'UNK' with a default team, e.g., 'NOP'
 
     # Get all team abbreviations
     all_team_abbreviations = [team['abbreviation'] for team in teams.get_teams()]
@@ -69,12 +88,22 @@ def build_and_train_models(data, threshold=20):
         features, target_pts, target_class, test_size=0.2, random_state=42
     )
 
-    # Scaling and model training within a pipeline
-    scaler = StandardScaler()
+    # Define numerical and categorical features
+    numerical_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
+                          'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
+    categorical_features = ['Opponent_Team']
+
+    # Create ColumnTransformer to scale numerical features and passthrough categorical features
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', StandardScaler(), numerical_features),
+            ('cat', 'passthrough', categorical_features)
+        ]
+    )
 
     # Regression Model with Hyperparameter Tuning
     reg_pipeline = Pipeline([
-        ('scaler', scaler),
+        ('preprocessor', preprocessor),
         ('regressor', XGBRegressor(random_state=42))
     ])
 
@@ -92,7 +121,7 @@ def build_and_train_models(data, threshold=20):
 
     # Classification Model with Hyperparameter Tuning and Handling Class Imbalance
     clf_pipeline = Pipeline([
-        ('scaler', scaler),
+        ('preprocessor', preprocessor),
         ('classifier', XGBClassifier(random_state=42, 
                                       scale_pos_weight=(len(y_clf_train)-sum(y_clf_train))/sum(y_clf_train)))
     ])
@@ -112,7 +141,7 @@ def build_and_train_models(data, threshold=20):
     # Feature Importance Analysis
     plt.figure(figsize=(10,6))
     importance = best_reg_model.named_steps['regressor'].feature_importances_
-    sns.barplot(x=importance, y=features.columns)
+    sns.barplot(x=importance, y=required_features)
     plt.title('Feature Importance from XGBoost Regressor')
     plt.tight_layout()
     os.makedirs('models', exist_ok=True)
@@ -126,10 +155,10 @@ def build_and_train_models(data, threshold=20):
     with open(os.path.join('models', 'classification_report.txt'), 'w') as f:
         f.write(classification_report(y_clf_test, clf_pred))
 
-    # Save models, scaler, and label encoder using joblib
+    # Save models, preprocessor, and label encoder using joblib
     joblib.dump(best_reg_model, os.path.join('models', 'XGBoostRegressor.joblib'))
     joblib.dump(best_clf_model, os.path.join('models', 'XGBoostClassifier.joblib'))
-    joblib.dump(scaler, os.path.join('models', 'scaler.joblib'))
+    joblib.dump(preprocessor, os.path.join('models', 'preprocessor.joblib'))
     joblib.dump(label_encoder, os.path.join('models', 'label_encoder.joblib'))
 
-    return best_reg_model, best_clf_model, scaler, label_encoder
+    return best_reg_model, best_clf_model, preprocessor, label_encoder

@@ -1,18 +1,19 @@
 # src/prediction.py
 
-import joblib  # Changed from pickle to joblib
+import joblib
 import os
 import logging
+import pandas as pd
 
 class ModelManager:
     def __init__(self):
         self.models_dir = 'models'
-        self.regressor_path = os.path.join(self.models_dir, 'XGBoostRegressor.joblib')  # Updated extension
-        self.classifier_path = os.path.join(self.models_dir, 'XGBoostClassifier.joblib')  # Updated extension
-        self.scaler_path = os.path.join(self.models_dir, 'scaler.joblib')  # Updated extension
-        self.label_encoder_path = os.path.join(self.models_dir, 'label_encoder.joblib')  # Updated extension
-        self.scaler = None
+        self.regressor_path = os.path.join(self.models_dir, 'XGBoostRegressor.joblib')
+        self.classifier_path = os.path.join(self.models_dir, 'XGBoostClassifier.joblib')
+        self.label_encoder_path = os.path.join(self.models_dir, 'label_encoder.joblib')
+        self.scaler_path = os.path.join(self.models_dir, 'scaler.joblib')
         self.label_encoder = None
+        self.scaler = None
 
     def load_model(self, model_type):
         if model_type == 'Regressor':
@@ -27,21 +28,11 @@ class ModelManager:
 
         try:
             model = joblib.load(path)
+            logging.info(f"Loaded {model_type} model from {path}.")
         except Exception as e:
             logging.error(f"Error loading {model_type} model from {path}: {e}")
             raise
         return model
-
-    def load_scaler(self):
-        if self.scaler is None:
-            if not os.path.exists(self.scaler_path):
-                raise FileNotFoundError(f"Scaler file {self.scaler_path} does not exist.")
-            try:
-                self.scaler = joblib.load(self.scaler_path)
-            except Exception as e:
-                logging.error(f"Error loading scaler from {self.scaler_path}: {e}")
-                raise
-        return self.scaler
 
     def load_label_encoder(self):
         if self.label_encoder is None:
@@ -49,21 +40,34 @@ class ModelManager:
                 raise FileNotFoundError(f"Label encoder file {self.label_encoder_path} does not exist.")
             try:
                 self.label_encoder = joblib.load(self.label_encoder_path)
+                logging.info("Loaded LabelEncoder for Opponent_Team.")
             except Exception as e:
                 logging.error(f"Error loading label encoder from {self.label_encoder_path}: {e}")
                 raise
         return self.label_encoder
 
+    def load_scaler(self):
+        if self.scaler is None:
+            if not os.path.exists(self.scaler_path):
+                raise FileNotFoundError(f"Scaler file {self.scaler_path} does not exist.")
+            try:
+                self.scaler = joblib.load(self.scaler_path)
+                logging.info("Loaded StandardScaler.")
+            except Exception as e:
+                logging.error(f"Error loading scaler from {self.scaler_path}: {e}")
+                raise
+        return self.scaler
+
     def prepare_input(self, minutes, fg_pct, ft_pct, threep_pct, usg_pct, per, opponent):
-        import pandas as pd
-        import numpy as np
-        scaler = self.load_scaler()
-        label_encoder = self.load_label_encoder()
+        # Load necessary encoders and scalers
+        self.load_label_encoder()
+        self.load_scaler()
 
         try:
-            opponent_encoded = label_encoder.transform([opponent])[0]
+            opponent_encoded = self.label_encoder.transform([opponent])[0]
+            logging.info(f"Encoded Opponent_Team '{opponent}' as {opponent_encoded}.")
         except ValueError as e:
-            logging.error(f"Error encoding opponent team '{opponent}': {e}")
+            logging.error(f"Error encoding Opponent_Team '{opponent}': {e}")
             raise
 
         input_data = pd.DataFrame({
@@ -73,21 +77,22 @@ class ModelManager:
             'ThreeP_Percentage': [threep_pct],
             'Usage_Rate': [usg_pct],
             'EFFICIENCY': [per],
-            'Opponent_Team': [opponent_encoded]
+            'Opponent_Team_Encoded': [opponent_encoded]
         })
 
-        try:
-            input_scaled = scaler.transform(input_data)
-        except Exception as e:
-            logging.error(f"Error scaling input data: {e}")
-            raise
+        # Scale numerical features
+        numeric_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
+                            'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
+        input_data[numeric_features] = self.scaler.transform(input_data[numeric_features])
 
-        return input_scaled
+        logging.info("Input data prepared for prediction.")
+        return input_data
 
     def predict_regression(self, input_data):
         reg_model = self.load_model('Regressor')
         try:
             predictions = reg_model.predict(input_data)
+            logging.info(f"Regression prediction: {predictions}")
         except Exception as e:
             logging.error(f"Error during regression prediction: {e}")
             raise
@@ -97,6 +102,7 @@ class ModelManager:
         clf_model = self.load_model('Classifier')
         try:
             predictions = clf_model.predict(input_data)
+            logging.info(f"Classification prediction: {predictions}")
         except Exception as e:
             logging.error(f"Error during classification prediction: {e}")
             raise
@@ -107,9 +113,6 @@ model_manager = ModelManager()
 
 def load_model(model_type):
     return model_manager.load_model(model_type)
-
-def load_scaler():
-    return model_manager.load_scaler()
 
 def load_label_encoder():
     return model_manager.load_label_encoder()
