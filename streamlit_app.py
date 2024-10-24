@@ -91,4 +91,4 @@ def main():
         st.info("Please enter a player's name to begin prediction.")
 
 if __name__ == "__main__":
-   
+    main()
