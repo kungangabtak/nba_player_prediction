@@ -45,7 +45,7 @@ def engineer_features(df):
 
     # Create ratio features
     if 'FG3A' in df.columns and 'FGA' in df.columns:
-        df['FG3A_FGA_RATIO'] = df['FGA'] / df['FG3A'].replace(0, np.nan)
+        df['FG3A_FGA_RATIO'] = df['FG3A'] / df['FGA'].replace(0, np.nan)
         df['FG3A_FGA_RATIO'] = df['FG3A_FGA_RATIO'].fillna(0)
     else:
         logging.warning("Columns 'FG3A' or 'FGA' missing. Creating 'FG3A_FGA_RATIO' with default value 0.")

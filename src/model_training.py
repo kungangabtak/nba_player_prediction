@@ -34,30 +34,26 @@ def build_and_train_models(data, threshold=20):
     label_encoder.fit(all_team_abbreviations)
 
     # Check for any opponent teams not in the label encoder
-    unique_opponents = data['Opponent_Team'].unique()
+    unique_opponents = data['Opponent_Team'].dropna().unique()
 
-    # Ensure unique_opponents are integers
-    if not pd.api.types.is_integer_dtype(unique_opponents):
-        logging.warning("Opponent_Team column is not of integer type. Attempting to convert.")
-        data['Opponent_Team'] = pd.to_numeric(data['Opponent_Team'], errors='coerce').astype('Int64')
-        unique_opponents = data['Opponent_Team'].dropna().unique()
+    # Ensure Opponent_Team is string type before encoding
+    data['Opponent_Team'] = data['Opponent_Team'].astype(str)
 
     try:
-        unique_opponent_abbr = label_encoder.inverse_transform(unique_opponents)
+        # Transform Opponent_Team to integer encoding
+        data['Opponent_Team'] = label_encoder.transform(data['Opponent_Team'])
     except ValueError as e:
-        logging.error(f"Error inverse transforming Opponent_Team: {e}")
-        unique_opponent_abbr = []
-
-    unknown_teams = set()
-    for abbr in unique_opponent_abbr:
-        if abbr not in all_team_abbreviations:
-            unknown_teams.add(abbr)
-
-    if unknown_teams:
-        logging.warning(f"The following opponent teams were not found in the LabelEncoder training set: {unknown_teams}")
-        # Exclude these rows
-        encoded_unknown = label_encoder.transform(list(unknown_teams))
-        data = data[~data['Opponent_Team'].isin(encoded_unknown)]
+        logging.error(f"Error encoding Opponent_Team: {e}")
+        # Identify which teams are causing the issue
+        unique_opponents = data['Opponent_Team'].unique()
+        unknown_teams = [team for team in unique_opponents if team not in label_encoder.classes_]
+        if unknown_teams:
+            logging.warning(f"The following opponent teams were not found in the LabelEncoder training set: {unknown_teams}")
+            # Exclude these rows
+            data = data[~data['Opponent_Team'].isin(unknown_teams)]
+        else:
+            logging.error("Unknown error during Opponent_Team encoding.")
+            raise e
 
     # Features and Targets
     required_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
