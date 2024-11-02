@@ -1,5 +1,6 @@
 # streamlit_app.py
 
+import traceback
 import streamlit as st
 import pandas as pd
 from src import prediction, utils, data_collection

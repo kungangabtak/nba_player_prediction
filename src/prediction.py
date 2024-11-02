@@ -9,10 +9,10 @@ from src.utils import get_opponent_teams, get_full_team_name
 from src.knowledge_graph import build_kg
 from src.kg_utils import extract_context_subgraph
 import networkx as nx
-import openai  # Ensure you have openai installed and set up
+import openai  # type: ignore # Ensure you have openai installed and set up
 import json
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv # type: ignore
 load_dotenv()
 
 # Set your OpenAI API key
