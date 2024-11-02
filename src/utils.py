@@ -13,7 +13,7 @@ def get_player_id(player_name, players_df):
         players_df (pd.DataFrame): DataFrame containing player information.
 
     Returns:
-        int or None: Player ID if found, else None.
+        str or None: Player ID if found, else None.
     """
     try:
         player_row = players_df[players_df['full_name'].str.lower() == player_name.lower()]
@@ -33,7 +33,7 @@ def get_opponent_teams(player_id, season, gamelogs):
     Retrieves a list of unique opponent teams the player has faced in the season.
 
     Parameters:
-        player_id (int): NBA player ID.
+        player_id (str): NBA player ID.
         season (str): NBA season (e.g., '2023-24').
         gamelogs (pd.DataFrame): DataFrame of player's game logs.
 

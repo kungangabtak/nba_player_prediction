@@ -1,5 +1,5 @@
 # requirements.txt
-
+nba_api
 aiohttp
 argparse
 matplotlib
@@ -13,3 +13,9 @@ streamlit
 tenacity
 tqdm
 xgboost
+torch
+torch_geometric 
+networkx
+pyvis
+chardet
+openai

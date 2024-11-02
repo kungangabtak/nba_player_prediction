@@ -1,31 +1,46 @@
 # src/model_training.py
 
 import pandas as pd
+import numpy as np
 import joblib
 import os
 from xgboost import XGBClassifier, XGBRegressor
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, r2_score
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from nba_api.stats.static import teams
 import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
-from data_preprocessing import clean_data  # Import the clean_data function
+from src.data_preprocessing import clean_data, feature_engineering  # Updated import statement
 
-def build_and_train_models(data, threshold=20):
+
+def build_and_train_models(game_logs_df, threshold=20):
+    """
+    Builds and trains regression and classification models based on game logs.
+
+    Parameters:
+        game_logs_df (pd.DataFrame): DataFrame containing all players' game logs.
+        threshold (int): Threshold for classification target.
+
+    Returns:
+        tuple: Best regression pipeline, best classification pipeline.
+    """
     # Clean the data
-    data = clean_data(data)
+    data = clean_data(game_logs_df)
 
-    # Rename columns (ensure that this mapping aligns with your cleaned data)
+    # Feature engineering
+    data = feature_engineering(data)
+
+    # Rename columns to standardize names
     data = data.rename(columns={
         'MIN': 'Minutes_Played',
         'FG_PCT': 'FG_Percentage',
         'FT_PCT': 'FT_Percentage',
         'FG3_PCT': 'ThreeP_Percentage',
-        'REB': 'REB',  # Assuming 'REB' is already named correctly
+        'REB': 'REB',
         'AST': 'AST',
         'STL': 'STL',
         'BLK': 'BLK',
@@ -35,45 +50,35 @@ def build_and_train_models(data, threshold=20):
         'FTM': 'FTM',
         'TOV': 'TOV',
         'PTS': 'PTS',
-        'MATCHUP': 'Opponent_Team'  # Assuming 'MATCHUP' is the column to extract opponent
+        'MATCHUP': 'MATCHUP'
     })
 
     # Extract 'Opponent_Team' from 'MATCHUP'
-    # Assuming 'MATCHUP' is in the format 'TEAM vs. OPPONENT' or 'TEAM @ OPPONENT'
-    data['Opponent_Team'] = data['Opponent_Team'].apply(lambda x: x.split(' ')[-1] if pd.notnull(x) else 'UNK')
+    # 'MATCHUP' format: 'TEAM_ABBREVIATION vs. OPPONENT' or 'TEAM_ABBREVIATION @ OPPONENT'
+    data['Opponent_Team'] = data['MATCHUP'].apply(lambda x: x.split(' ')[-1] if pd.notnull(x) else 'UNK')
 
     # Handle any unknown opponents
-    data['Opponent_Team'] = data['Opponent_Team'].replace({'UNK': 'NOP'})  # Replace 'UNK' with a default team, e.g., 'NOP'
+    data['Opponent_Team'] = data['Opponent_Team'].replace({'UNK': 'NOP'})  # Replace 'UNK' with a default team
 
-    # Get all team abbreviations
-    all_team_abbreviations = [team['abbreviation'] for team in teams.get_teams()]
+    # No manual LabelEncoder; encoding is handled within the pipeline
 
-    # Initialize Label Encoder for Opponent_Team with all team abbreviations
-    label_encoder = LabelEncoder()
-    label_encoder.fit(all_team_abbreviations)
+    # Calculate 'Usage_Rate' and 'EFFICIENCY' if not present
+    if 'Usage_Rate' not in data.columns:
+        data['Usage_Rate'] = (data['FGA'] + 0.44 * data['FTA'] + data['TOV']) / data['Minutes_Played'].replace(0, np.nan)
+        data['Usage_Rate'] = data['Usage_Rate'].fillna(0)
 
-    # Ensure Opponent_Team is string type before encoding
-    data['Opponent_Team'] = data['Opponent_Team'].astype(str)
-
-    try:
-        # Transform Opponent_Team to integer encoding
-        data['Opponent_Team'] = label_encoder.transform(data['Opponent_Team'])
-    except ValueError as e:
-        logging.error(f"Error encoding Opponent_Team: {e}")
-        # Identify which teams are causing the issue
-        unique_opponents = data['Opponent_Team'].unique()
-        unknown_teams = [team for team in unique_opponents if team not in label_encoder.classes_]
-        if unknown_teams:
-            logging.warning(f"The following opponent teams were not found in the LabelEncoder training set: {unknown_teams}")
-            # Exclude these rows
-            data = data[~data['Opponent_Team'].isin(unknown_teams)]
-        else:
-            logging.error("Unknown error during Opponent_Team encoding.")
-            raise e
+    if 'EFFICIENCY' not in data.columns:
+        data['EFFICIENCY'] = (
+            data['PTS'] + data['REB'] + data['AST'] + data['STL'] + data['BLK']
+            - (data['FGA'] - data['FG_Percentage'] * data['FGA'])
+            - (data['FTA'] - data['FT_Percentage'] * data['FTA'])
+            - data['TOV']
+        )
 
     # Features and Targets
-    required_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
+    required_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage',
                          'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY', 'Opponent_Team']
+    
     missing_features = [feat for feat in required_features if feat not in data.columns]
     if missing_features:
         logging.error(f"The following required features are missing from the data: {missing_features}")
@@ -89,19 +94,19 @@ def build_and_train_models(data, threshold=20):
     )
 
     # Define numerical and categorical features
-    numerical_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage', 
+    numerical_features = ['Minutes_Played', 'FG_Percentage', 'FT_Percentage',
                           'ThreeP_Percentage', 'Usage_Rate', 'EFFICIENCY']
     categorical_features = ['Opponent_Team']
 
-    # Create ColumnTransformer to scale numerical features and passthrough categorical features
+    # Create ColumnTransformer to scale numerical features and encode categorical features
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', StandardScaler(), numerical_features),
-            ('cat', 'passthrough', categorical_features)
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
         ]
     )
 
-    # Regression Model with Hyperparameter Tuning
+    # Regression Pipeline with Hyperparameter Tuning
     reg_pipeline = Pipeline([
         ('preprocessor', preprocessor),
         ('regressor', XGBRegressor(random_state=42))
@@ -115,15 +120,15 @@ def build_and_train_models(data, threshold=20):
 
     reg_grid = GridSearchCV(reg_pipeline, reg_params, cv=5, scoring='r2', n_jobs=-1)
     reg_grid.fit(X_train, y_reg_train)
-    best_reg_model = reg_grid.best_estimator_
-    reg_pred = best_reg_model.predict(X_test)
+    best_reg_pipeline = reg_grid.best_estimator_
+    reg_pred = best_reg_pipeline.predict(X_test)
     logging.info("Regression R2 Score: {:.4f}".format(r2_score(y_reg_test, reg_pred)))
 
-    # Classification Model with Hyperparameter Tuning and Handling Class Imbalance
+    # Classification Pipeline with Hyperparameter Tuning
     clf_pipeline = Pipeline([
         ('preprocessor', preprocessor),
-        ('classifier', XGBClassifier(random_state=42, 
-                                      scale_pos_weight=(len(y_clf_train)-sum(y_clf_train))/sum(y_clf_train)))
+        ('classifier', XGBClassifier(random_state=42,
+                                     scale_pos_weight=(len(y_clf_train)-sum(y_clf_train))/sum(y_clf_train)))
     ])
 
     clf_params = {
@@ -134,14 +139,17 @@ def build_and_train_models(data, threshold=20):
 
     clf_grid = GridSearchCV(clf_pipeline, clf_params, cv=5, scoring='accuracy', n_jobs=-1)
     clf_grid.fit(X_train, y_clf_train)
-    best_clf_model = clf_grid.best_estimator_
-    clf_pred = best_clf_model.predict(X_test)
+    best_clf_pipeline = clf_grid.best_estimator_
+    clf_pred = best_clf_pipeline.predict(X_test)
     logging.info("Classification Report:\n{}".format(classification_report(y_clf_test, clf_pred)))
 
     # Feature Importance Analysis
     plt.figure(figsize=(10,6))
-    importance = best_reg_model.named_steps['regressor'].feature_importances_
-    sns.barplot(x=importance, y=required_features)
+    importance = best_reg_pipeline.named_steps['regressor'].feature_importances_
+    # Get feature names after OneHotEncoding
+    cat_features = best_reg_pipeline.named_steps['preprocessor'].named_transformers_['cat'].get_feature_names_out(categorical_features)
+    feature_names = numerical_features + list(cat_features)
+    sns.barplot(x=importance, y=feature_names)
     plt.title('Feature Importance from XGBoost Regressor')
     plt.tight_layout()
     os.makedirs('models', exist_ok=True)
@@ -155,10 +163,11 @@ def build_and_train_models(data, threshold=20):
     with open(os.path.join('models', 'classification_report.txt'), 'w') as f:
         f.write(classification_report(y_clf_test, clf_pred))
 
-    # Save models, preprocessor, and label encoder using joblib
-    joblib.dump(best_reg_model, os.path.join('models', 'XGBoostRegressor.joblib'))
-    joblib.dump(best_clf_model, os.path.join('models', 'XGBoostClassifier.joblib'))
-    joblib.dump(preprocessor, os.path.join('models', 'preprocessor.joblib'))
-    joblib.dump(label_encoder, os.path.join('models', 'label_encoder.joblib'))
+    # Save the trained pipelines using joblib
+    os.makedirs('models', exist_ok=True)
+    joblib.dump(best_reg_pipeline, os.path.join('models', 'XGBoostRegressor_pipeline.joblib'))
+    joblib.dump(best_clf_pipeline, os.path.join('models', 'XGBoostClassifier_pipeline.joblib'))
 
-    return best_reg_model, best_clf_model, preprocessor, label_encoder
+    logging.info("Models and pipelines saved successfully.")
+
+    return best_reg_pipeline, best_clf_pipeline
