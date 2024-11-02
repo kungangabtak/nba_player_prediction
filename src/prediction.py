@@ -25,6 +25,7 @@ class ModelManager:
         self.classifier_pipeline = None
         self.KG = None
         self.season = season
+        self.teams_df = None  # Initialize teams_df
 
     def load_models(self):
         """
@@ -48,6 +49,7 @@ class ModelManager:
         try:
             players_df = get_all_players(season=self.season)
             teams_df = get_team_data()
+            self.teams_df = teams_df  # Store teams_df as an instance attribute
             game_logs_df = get_all_player_game_logs(season=self.season)
             self.KG = build_kg(players_df, teams_df, game_logs_df)
             logging.info("Knowledge Graph built successfully.")

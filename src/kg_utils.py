@@ -34,8 +34,13 @@ def extract_context_subgraph(KG, player_id, opponent_team_abbr, model_manager):
     # Add the opponent team node
     opponent_team_id = model_manager.get_team_id_from_abbr(opponent_team_abbr)
     if opponent_team_id:
-        nodes.add(opponent_team_id)
-        logging.debug(f"Added Opponent Team ID {opponent_team_id} to subgraph.")
+        if KG.has_node(opponent_team_id):
+            nodes.add(opponent_team_id)
+            logging.debug(f"Added Opponent Team ID {opponent_team_id} to subgraph.")
+        else:
+            logging.warning(f"Opponent Team ID {opponent_team_id} not found in KG.")
+    else:
+        logging.warning(f"Opponent team abbreviation '{opponent_team_abbr}' could not be resolved to a team ID.")
     
     # Extract the subgraph
     subgraph = KG.subgraph(nodes).copy()

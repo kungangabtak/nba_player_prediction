@@ -9,6 +9,8 @@ import networkx as nx
 from pyvis.network import Network
 import streamlit.components.v1 as components
 import io  # Ensure io is imported
+import tempfile
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -39,7 +41,8 @@ def load_models(season='2023-24'):
 def visualize_subgraph(subgraph):
     """
     Visualizes a NetworkX subgraph using PyVis within Streamlit.
-    
+    Labels nodes with their actual names instead of IDs.
+
     Parameters:
         subgraph (networkx.Graph): The subgraph to visualize.
     """
@@ -48,20 +51,50 @@ def visualize_subgraph(subgraph):
         return
     
     try:
+        # Create a copy of the subgraph to avoid modifying the original
+        subgraph_copy = subgraph.copy()
+        
+        # Iterate through each node and set the 'label' attribute
+        for node, data in subgraph_copy.nodes(data=True):
+            if 'name' in data:
+                subgraph_copy.nodes[node]['label'] = data['name']
+            else:
+                # Fallback to node ID if 'name' attribute is missing
+                subgraph_copy.nodes[node]['label'] = node
+        
         # Initialize PyVis Network
         net = Network(height='500px', width='100%', notebook=False)
-        net.from_nx(subgraph)
+        net.from_nx(subgraph_copy)
         
-        # Create an in-memory buffer
-        buffer = io.StringIO()
-        net.save_graph(buffer)
-        html = buffer.getvalue()
-        buffer.close()
+        # Customize node appearance based on type
+        for node, data in subgraph_copy.nodes(data=True):
+            if data.get('type') == 'Player':
+                net.get_node(node)['color'] = 'blue'
+                net.get_node(node)['shape'] = 'ellipse'
+            elif data.get('type') == 'Team':
+                net.get_node(node)['color'] = 'green'
+                net.get_node(node)['shape'] = 'box'
+            elif data.get('type') == 'Game':
+                net.get_node(node)['color'] = 'red'
+                net.get_node(node)['shape'] = 'diamond'
+        
+        # Generate the graph HTML
+        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.html') as tmp_file:
+            net.save_graph(tmp_file.name)
+            tmp_file_path = tmp_file.name
+        
+        # Read the HTML content from the temporary file
+        with open(tmp_file_path, 'r') as f:
+            html = f.read()
+        
+        # Remove the temporary file
+        os.remove(tmp_file_path)
         
         # Render the HTML in Streamlit
         components.html(html, height=550)
     except Exception as e:
-        logging.error(f"Error visualizing subgraph: {e}")
+        # Log the full traceback for detailed debugging
+        logging.error(f"Error visualizing subgraph: {e}\n{traceback.format_exc()}")
         st.error("Error visualizing the Knowledge Graph subgraph.")
 
 def main():
