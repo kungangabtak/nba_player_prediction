@@ -69,15 +69,25 @@ def visualize_subgraph(subgraph):
         
         # Customize node appearance based on type
         for node, data in subgraph_copy.nodes(data=True):
-            if data.get('type') == 'Player':
+            node_type = data.get('type')
+            if node_type == 'Player':
                 net.get_node(node)['color'] = 'blue'
                 net.get_node(node)['shape'] = 'ellipse'
-            elif data.get('type') == 'Team':
+            elif node_type == 'Team':
                 net.get_node(node)['color'] = 'green'
                 net.get_node(node)['shape'] = 'box'
-            elif data.get('type') == 'Game':
+            elif node_type == 'Game':
                 net.get_node(node)['color'] = 'red'
                 net.get_node(node)['shape'] = 'diamond'
+            elif node_type == 'Opponent_Team':  # New node type for Opponent
+                net.get_node(node)['color'] = 'purple'
+                net.get_node(node)['shape'] = 'dot'
+            elif node_type == 'Home_Away':  # New node type for Home vs. Away games
+                net.get_node(node)['color'] = 'orange'
+                net.get_node(node)['shape'] = 'triangle'
+            elif node_type == 'Performance':  # Performance metrics node
+                net.get_node(node)['color'] = 'yellow'
+                net.get_node(node)['shape'] = 'star'
         
         # Generate the graph HTML
         with tempfile.NamedTemporaryFile('w', delete=False, suffix='.html') as tmp_file:

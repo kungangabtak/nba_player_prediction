@@ -50,9 +50,16 @@ def build_kg(players_df, teams_df, game_logs_df):
         game_date = row['GAME_DATE']
         team_id = row['TEAM_ID']
         matchup = row['MATCHUP']
+        
+        # Add venue information if available
+        venue_name = row.get('ARENA_NAME', None)  # Adjust based on actual NBA API structure
+        if venue_name:
+            KG.add_node(venue_name, type='Venue', name=venue_name)
+            KG.add_edge(game_id, venue_name, relation='played_at')
+            logging.debug(f"Added Venue node: {venue_name} for Game ID {game_id}")
 
+        # Add game and opponent relationship
         if pd.notnull(matchup):
-            # Assuming 'MATCHUP' format: 'TEAM_ABBR vs. OPPONENT' or 'TEAM_ABBR @ OPPONENT'
             parts = matchup.split(' ')
             if len(parts) >= 3:
                 opponent_abbr = parts[-1]
@@ -91,6 +98,23 @@ def build_kg(players_df, teams_df, game_logs_df):
                     KG.add_node(stat_node, type='Stat', name=stat_name, value=stat_value)
                     KG.add_edge(player_id, stat_node, relation=f'has_{stat_name.lower()}')
                     logging.debug(f"Added Stat node for {stat_name} with value {stat_value} linked to Player ID {player_id}")
+
+        # Historical performance nodes (e.g., average performance over season)
+        season_avg_node = f"{player_id}_season_avg"
+        if not KG.has_node(season_avg_node):
+            KG.add_node(season_avg_node, type='HistoricalPerformance', name='SeasonAverage')
+            KG.add_edge(player_id, season_avg_node, relation='has_historical_performance')
+            logging.debug(f"Added historical performance node for Player ID {player_id}")
+
+        # Add matchup nodes if relevant
+        opponent_team_id = row.get('Opponent_Team')
+        if opponent_team_id:
+            matchup_node = f"{player_id}_vs_{opponent_team_id}"
+            if not KG.has_node(matchup_node):
+                KG.add_node(matchup_node, type='Matchup', name=f"{player_id} vs {opponent_team_id}")
+                KG.add_edge(player_id, matchup_node, relation='matchup_performance')
+                KG.add_edge(opponent_team_id, matchup_node, relation='opponent_in')
+                logging.debug(f"Added matchup node for Player ID {player_id} against Team ID {opponent_team_id}")
 
     logging.info("Knowledge Graph constructed with entities and relationships.")
     return KG
