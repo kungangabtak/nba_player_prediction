@@ -64,5 +64,33 @@ def build_kg(players_df, teams_df, game_logs_df):
                     KG.add_edge(opponent_id, game_id, relation='opponent_in')
                     logging.debug(f"Added Game node: {game_id} on {game_date} with Team ID {team_id} vs Opponent ID {opponent_id}")
 
+        # Add feature-engineered nodes as attributes of the game/player
+        player_id = row['PLAYER_ID']
+        if player_id in KG.nodes:
+            feature_stats = {
+                'Minutes_Played': row.get('Minutes_Played', None),
+                'FG_Percentage': row.get('FG_Percentage', None),
+                'FT_Percentage': row.get('FT_Percentage', None),
+                'ThreeP_Percentage': row.get('ThreeP_Percentage', None),
+                'Usage_Rate': row.get('Usage_Rate', None),
+                'EFFICIENCY': row.get('EFFICIENCY', None),
+                'PTS': row.get('PTS', None),
+                'PTS_Rolling_Avg': row.get('PTS_Rolling_Avg', None),
+                'REB_Rolling_Avg': row.get('REB_Rolling_Avg', None),
+                'AST_Rolling_Avg': row.get('AST_Rolling_Avg', None),
+                'HOME_GAME': row.get('HOME_GAME', None),
+                'Opponent_PTS_Allowed': row.get('Opponent_PTS_Allowed', None),
+                'FG3A_FGA_RATIO': row.get('FG3A_FGA_RATIO', None),
+                'FT_FG_RATIO': row.get('FT_FG_RATIO', None)
+            }
+
+            # Create Stat nodes and relationships from player or game
+            for stat_name, stat_value in feature_stats.items():
+                if stat_value is not None:
+                    stat_node = f"{game_id}_{stat_name}"
+                    KG.add_node(stat_node, type='Stat', name=stat_name, value=stat_value)
+                    KG.add_edge(player_id, stat_node, relation=f'has_{stat_name.lower()}')
+                    logging.debug(f"Added Stat node for {stat_name} with value {stat_value} linked to Player ID {player_id}")
+
     logging.info("Knowledge Graph constructed with entities and relationships.")
     return KG

@@ -60,34 +60,3 @@ def clean_data(df):
     
     return df_cleaned
 
-def feature_engineering(df):
-    """
-    Enhances the dataset with additional features derived from available data.
-
-    Parameters:
-        df (pd.DataFrame): Cleaned DataFrame.
-
-    Returns:
-        pd.DataFrame: DataFrame with additional engineered features.
-    """
-    logging.info("Starting feature engineering.")
-
-    # Example: Calculate rolling averages for the last 5 games
-    df = df.sort_values(by=['PLAYER_ID', 'GAME_DATE'], ascending=[True, False])
-    df['PTS_Rolling_Avg'] = df.groupby('PLAYER_ID')['PTS'].rolling(window=5, min_periods=1).mean().reset_index(0, drop=True)
-    df['REB_Rolling_Avg'] = df.groupby('PLAYER_ID')['REB'].rolling(window=5, min_periods=1).mean().reset_index(0, drop=True)
-    df['AST_Rolling_Avg'] = df.groupby('PLAYER_ID')['AST'].rolling(window=5, min_periods=1).mean().reset_index(0, drop=True)
-    logging.debug("Calculated rolling averages for PTS, REB, AST.")
-
-    # Example: Home vs Away
-    df['HOME_GAME'] = df['MATCHUP'].str.contains('@').map({True: 0, False: 1})  # Assuming '@' indicates away
-    logging.debug("Added HOME_GAME feature.")
-
-    # Example: Opponent Strength (average PTS allowed by opponent)
-    opponent_ids = df['MATCHUP'].apply(lambda x: x.split(' ')[-1] if pd.notnull(x) else None)
-    opponent_pts_allowed = df.groupby('MATCHUP')['PTS'].mean().rename('Opponent_PTS_Allowed')
-    df = df.join(opponent_pts_allowed, on='MATCHUP')
-    logging.debug("Added Opponent_PTS_Allowed feature.")
-
-    logging.info("Feature engineering completed.")
-    return df

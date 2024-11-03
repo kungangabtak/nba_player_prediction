@@ -3,7 +3,7 @@ nba_api
 aiohttp
 argparse
 matplotlib
-numpy
+numpy==1.23.5
 nba-api
 pandas
 requests
