@@ -19,3 +19,4 @@ networkx
 pyvis
 chardet
 openai
+tiktoken

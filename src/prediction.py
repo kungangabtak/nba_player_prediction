@@ -11,6 +11,8 @@ from src.kg_utils import extract_context_subgraph
 import networkx as nx
 import openai  # type: ignore # Ensure you have openai installed and set up
 import json
+import tiktoken
+
 
 from dotenv import load_dotenv # type: ignore
 load_dotenv()
@@ -41,7 +43,22 @@ class ModelManager:
         except Exception as e:
             logging.error(f"Unexpected error loading models: {e}")
             raise
+    
+    def get_team_name_from_abbr(self, abbr):
+        """
+        Retrieves the full team name based on its abbreviation.
 
+        Parameters:
+            abbr (str): Team abbreviation (e.g., 'BOS').
+
+        Returns:
+            str or None: Full team name if found, else None.
+        """
+        for node, data in self.KG.nodes(data=True):
+            if data.get('type') == 'Team' and data.get('abbreviation') == abbr:
+                return data.get('full_name')  # Changed from 'name' to 'full_name'
+        return None
+    
     def build_knowledge_graph(self):
         """
         Builds or loads the Knowledge Graph for the specified season.
@@ -94,48 +111,89 @@ class ModelManager:
             logging.error(f"Error retrieving team ID for abbreviation '{team_abbr}': {e}")
             return None
 
-    def generate_explanation(self, player_name, opponent_team, prediction, context_info):
+    def generate_explanation(self, player_name, opponent_team, prediction_result, context_info, max_retries=5):
         """
-        Generates an explanation for the prediction using OpenAI's GPT model.
-        
+        Generates an explanation for the prediction using OpenAI's API.
+
         Parameters:
             player_name (str): Name of the player.
-            opponent_team (str): Opponent team abbreviation.
-            prediction (dict): Dictionary containing regression and classification predictions.
-            context_info (dict): Additional context extracted from KG.
-        
+            opponent_team (str): Name of the opponent team.
+            prediction_result (dict): Dictionary containing prediction results.
+            context_info (dict): Dictionary containing context information.
+            max_retries (int): Maximum number of retries for rate limit errors.
+
         Returns:
-            str: Generated explanation text.
+            str: Generated explanation or an error message.
+        """
+        # Construct a concise prompt
+        relationships = "; ".join([
+            f"{rel['source']} {rel['relation']} {rel['target']}"
+            for rel in context_info.get('Relationships', [])
+            if rel.get('relation') in ['matched_up_against', 'plays_for']
+        ])
+
+        prompt = (
+            f"Provide an explanation for the prediction that {player_name} will "
+            f"{'exceed' if prediction_result['exceeds_threshold'] else 'not exceed'} the "
+            f"points threshold against {opponent_team}. "
+            f"Consider the following relationships: {relationships}."
+        )
+
+        # Count tokens to ensure prompt is within limits
+        token_count = self.count_tokens(prompt)
+        logging.debug(f"Prompt token count: {token_count}")
+
+        if token_count > 4000:  # Adjust based on model's max tokens
+            logging.warning("Prompt is too long. Trimming the context.")
+            # Trim the relationships or other parts as necessary
+            relationships = "; ".join([
+                f"{rel['source']} {rel['relation']} {rel['target']}"
+                for rel in context_info.get('Relationships', [])[:10]  # Limit to first 10 relationships
+                if rel.get('relation') in ['matched_up_against', 'plays_for']
+            ])
+            prompt = (
+                f"Provide an explanation for the prediction that {player_name} will "
+                f"{'exceed' if prediction_result['exceeds_threshold'] else 'not exceed'} the "
+                f"points threshold against {opponent_team}. "
+                f"Consider the following relationships: {relationships}."
+            )
+
+        for attempt in range(max_retries):
+            try:
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                explanation = response.choices[0].message['content']
+                return explanation
+            except openai.error.RateLimitError:
+                wait_time = 2 ** attempt
+                logging.warning(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            except openai.error.InvalidRequestError as e:
+                logging.error(f"Invalid request: {e}")
+                break
+            except Exception as e:
+                logging.error(f"Error generating explanation with OpenAI: {e}")
+                break
+        return "Explanation could not be generated at this time. Please try again later."
+
+    def count_tokens(self, text):
+        """
+        Counts the number of tokens in the given text using OpenAI's tiktoken.
+
+        Parameters:
+            text (str): The text to count tokens for.
+
+        Returns:
+            int: Number of tokens.
         """
         try:
-            messages = [
-                {"role": "system", "content": "You are an NBA analyst."},
-                {"role": "user", "content": f"""
-                Provide a detailed explanation for the performance prediction of {player_name} against {opponent_team}.
-
-                Prediction Details:
-                - Predicted Points: {prediction['points']:.2f}
-                - Will Exceed Threshold: {'Yes' if prediction['exceeds_threshold'] else 'No'}
-
-                Context Information:
-                {json.dumps(context_info, indent=4)}
-
-                Using the available data, explain how the player's recent performance, team dynamics, and historical matchups influence this prediction.
-                                """}
-            ]
-
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                max_tokens=250,
-                temperature=0.7,
-            )
-            explanation = response['choices'][0]['message']['content'].strip()
-            return explanation
+            encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+            return len(encoding.encode(text))
         except Exception as e:
-            logging.error(f"Error generating explanation with OpenAI: {e}")
-            return "Unable to generate explanation at this time."
-
+            logging.error(f"Error counting tokens: {e}")
+            return 0  # Or handle as appropriate
 def prepare_input(player_name, opponent_abbr, season='2023-24'):
     """
     Prepares the input features for prediction based on player name, opponent team, and season.
@@ -250,96 +308,3 @@ def get_player_id(player_name, players_df):
         logging.error(f"Error retrieving player ID for '{player_name}': {e}")
         return None
 
-# src/data_preprocessing.py
-
-import pandas as pd
-from sklearn.impute import SimpleImputer
-import numpy as np
-import logging
-
-def clean_data(df):
-    # Log all columns before cleaning
-    logging.info(f"Columns before cleaning: {df.columns.tolist()}")
-    
-    # Replace infinite values with NaN
-    num_inf = np.isinf(df.select_dtypes(include=['number'])).sum().sum()
-    if num_inf > 0:
-        logging.warning(f"Found {num_inf} infinite values. Replacing with NaN.")
-        df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    
-    # Cap extremely large and small values to reasonable limits (1st and 99th percentiles)
-    numeric_cols = df.select_dtypes(include=['number']).columns
-    for col in numeric_cols:
-        lower_limit = df[col].quantile(0.01)
-        upper_limit = df[col].quantile(0.99)
-        df[col] = df[col].clip(lower=lower_limit, upper=upper_limit)
-        logging.debug(f"Capped values in column '{col}' between {lower_limit} and {upper_limit}.")
-    
-    # Check for any remaining infinite values
-    if np.isinf(df[numeric_cols]).values.any():
-        logging.error("Data contains infinite values even after replacement.")
-        df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    
-    # Check for any remaining NaN values
-    num_nan = df[numeric_cols].isna().sum().sum()
-    if num_nan > 0:
-        logging.info(f"Found {num_nan} NaN values. Proceeding with imputation.")
-    else:
-        logging.info("No NaN values found in numeric columns.")
-    
-    # Use SimpleImputer to handle missing values (impute with mean)
-    imputer = SimpleImputer(strategy='mean')
-    try:
-        df_imputed = pd.DataFrame(imputer.fit_transform(df[numeric_cols]), columns=numeric_cols)
-        logging.info("Data imputation with mean strategy successful.")
-    except ValueError as e:
-        logging.error(f"Imputation failed: {e}")
-        raise ValueError(f"Imputation failed: {e}")
-    
-    # Log detailed imputation information
-    missing_before = df[numeric_cols].isna().sum()
-    missing_after = df_imputed.isna().sum()
-    logging.info(f"Missing values before imputation:\n{missing_before}")
-    logging.info(f"Missing values after imputation:\n{missing_after}")
-    
-    # Combine imputed numeric data with non-numeric data
-    non_numeric_cols = df.select_dtypes(exclude=['number']).columns
-    df_cleaned = pd.concat([df_imputed, df[non_numeric_cols].reset_index(drop=True)], axis=1)
-    
-    # Log summary statistics after cleaning
-    logging.info("Summary statistics after cleaning:")
-    logging.info(df_imputed.describe())
-    
-    return df_cleaned
-
-def feature_engineering(df):
-    """
-    Enhances the dataset with additional features derived from available data.
-
-    Parameters:
-        df (pd.DataFrame): Cleaned DataFrame.
-
-    Returns:
-        pd.DataFrame: DataFrame with additional engineered features.
-    """
-    logging.info("Starting feature engineering.")
-
-    # Example: Calculate rolling averages for the last 5 games
-    df = df.sort_values(by=['PLAYER_ID', 'GAME_DATE'], ascending=[True, False])
-    df['PTS_Rolling_Avg'] = df.groupby('PLAYER_ID')['PTS'].rolling(window=5, min_periods=1).mean().reset_index(0, drop=True)
-    df['REB_Rolling_Avg'] = df.groupby('PLAYER_ID')['REB'].rolling(window=5, min_periods=1).mean().reset_index(0, drop=True)
-    df['AST_Rolling_Avg'] = df.groupby('PLAYER_ID')['AST'].rolling(window=5, min_periods=1).mean().reset_index(0, drop=True)
-    logging.debug("Calculated rolling averages for PTS, REB, AST.")
-
-    # Example: Home vs Away
-    df['HOME_GAME'] = df['MATCHUP'].str.contains('@').map({True: 0, False: 1})  # Assuming '@' indicates away
-    logging.debug("Added HOME_GAME feature.")
-
-    # Example: Opponent Strength (average PTS allowed by opponent)
-    opponent_abbr = df['Opponent_Team']
-    opponent_pts_allowed = df.groupby('Opponent_Team')['PTS'].mean().rename('Opponent_PTS_Allowed')
-    df = df.join(opponent_pts_allowed, on='Opponent_Team')
-    logging.debug("Added Opponent_PTS_Allowed feature.")
-
-    logging.info("Feature engineering completed.")
-    return df

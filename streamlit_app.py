@@ -1,17 +1,12 @@
 # streamlit_app.py
 
-import traceback
 import streamlit as st
-import pandas as pd
-from src import prediction, utils, data_collection
 import logging
+from src import prediction, utils, data_collection
 from src.kg_utils import extract_context_subgraph
 import networkx as nx
 from pyvis.network import Network
 import streamlit.components.v1 as components
-import io  # Ensure io is imported
-import tempfile
-import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,17 +15,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def load_models(season='2023-24'):
     """
     Loads the ModelManager, including models and the Knowledge Graph.
-    
+
     Parameters:
         season (str): NBA season to build the Knowledge Graph for.
-    
+
     Returns:
         ModelManager: An instance of the ModelManager class with loaded models and KG.
     """
     try:
         model_manager = prediction.ModelManager(season=season)
         model_manager.load_models()             # Loads the entire pipelines
-        model_manager.build_knowledge_graph()   # Builds the Knowledge Graph
+        model_manager.build_knowledge_graph()   # Builds the Knowledge Graph with clustering
         return model_manager
     except FileNotFoundError as e:
         logging.error(f"Model file missing: {e}")
@@ -52,60 +47,63 @@ def visualize_subgraph(subgraph):
         return
     
     try:
-        # Create a copy of the subgraph to avoid modifying the original
-        subgraph_copy = subgraph.copy()
-        
-        # Iterate through each node and set the 'label' attribute
-        for node, data in subgraph_copy.nodes(data=True):
-            if 'name' in data:
-                subgraph_copy.nodes[node]['label'] = data['name']
-            else:
-                # Fallback to node ID if 'name' attribute is missing
-                subgraph_copy.nodes[node]['label'] = node
-        
         # Initialize PyVis Network
-        net = Network(height='500px', width='100%', notebook=False)
-        net.from_nx(subgraph_copy)
-        
-        # Customize node appearance based on type
-        for node, data in subgraph_copy.nodes(data=True):
-            node_type = data.get('type')
+        net = Network(height='600px', width='100%', notebook=False, directed=False)
+
+        # Add nodes with labels and colors based on type
+        for node, data in subgraph.nodes(data=True):
+            label = node  # Node identifier is already the name
+            node_type = data.get('type', 'Unknown')
+
+            # Define node color and shape based on type
             if node_type == 'Player':
-                net.get_node(node)['color'] = 'blue'
-                net.get_node(node)['shape'] = 'ellipse'
+                color = 'blue'
+                shape = 'ellipse'
             elif node_type == 'Team':
-                net.get_node(node)['color'] = 'green'
-                net.get_node(node)['shape'] = 'box'
+                color = 'green'
+                shape = 'box'
             elif node_type == 'Game':
-                net.get_node(node)['color'] = 'red'
-                net.get_node(node)['shape'] = 'diamond'
-            elif node_type == 'Opponent_Team':  # New node type for Opponent
-                net.get_node(node)['color'] = 'purple'
-                net.get_node(node)['shape'] = 'dot'
-            elif node_type == 'Home_Away':  # New node type for Home vs. Away games
-                net.get_node(node)['color'] = 'orange'
-                net.get_node(node)['shape'] = 'triangle'
-            elif node_type == 'Performance':  # Performance metrics node
-                net.get_node(node)['color'] = 'yellow'
-                net.get_node(node)['shape'] = 'star'
+                color = 'red'
+                shape = 'diamond'
+            elif node_type == 'Venue':
+                color = 'orange'
+                shape = 'triangle'
+            elif node_type == 'HistoricalPerformance':
+                color = 'purple'
+                shape = 'dot'
+            else:
+                color = 'grey'
+                shape = 'ellipse'
+            
+            # Optionally, use cluster information for coloring
+            cluster_id = data.get('cluster')
+            if cluster_id is not None:
+                # Assign a color based on cluster ID
+                # For simplicity, use a palette or generate colors dynamically
+                # Here, we'll use a basic mapping for demonstration
+                palette = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+                           '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
+                           '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
+                           '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080']
+                color = palette[cluster_id % len(palette)]
+            
+            net.add_node(node, label=label, color=color, shape=shape)
+
+        # Add edges with labels
+        for u, v, data in subgraph.edges(data=True):
+            relation = data.get('relation', '')
+            net.add_edge(u, v, title=relation)
+        
+        # Enable physics for better layout
+        net.toggle_physics(True)
         
         # Generate the graph HTML
-        with tempfile.NamedTemporaryFile('w', delete=False, suffix='.html') as tmp_file:
-            net.save_graph(tmp_file.name)
-            tmp_file_path = tmp_file.name
-        
-        # Read the HTML content from the temporary file
-        with open(tmp_file_path, 'r') as f:
-            html = f.read()
-        
-        # Remove the temporary file
-        os.remove(tmp_file_path)
-        
-        # Render the HTML in Streamlit
-        components.html(html, height=550)
+        graph_html = net.generate_html()
+
+        # Display the graph in Streamlit
+        components.html(graph_html, height=700, width=900)
     except Exception as e:
-        # Log the full traceback for detailed debugging
-        logging.error(f"Error visualizing subgraph: {e}\n{traceback.format_exc()}")
+        logging.error(f"Error visualizing subgraph: {e}")
         st.error("Error visualizing the Knowledge Graph subgraph.")
 
 def main():
@@ -124,9 +122,9 @@ def main():
         st.error(f"An unexpected error occurred while loading models: {e}")
         return
 
-    player_name = st.text_input("Enter Player Name (e.g., LeBron James)")
+    player_name_input = st.text_input("Enter Player Name (e.g., LeBron James)")
 
-    if player_name:
+    if player_name_input:
         # Fetch all players for the selected season
         players_df = data_collection.get_all_players(season)
         if players_df.empty:
@@ -134,7 +132,7 @@ def main():
             return
 
         # Retrieve player ID
-        player_id = utils.get_player_id(player_name, players_df)
+        player_id = utils.get_player_id(player_name_input, players_df=players_df)
         if player_id is None:
             st.error("Player not found. Please check the name and try again.")
             return
@@ -146,14 +144,14 @@ def main():
             return
 
         team_abbreviations = all_teams['abbreviation'].tolist()
-        opponent = st.selectbox("Select Opponent Team", team_abbreviations)
+        opponent_abbr = st.selectbox("Select Opponent Team", team_abbreviations)
 
-        st.header(f"Predict Performance for {player_name} against {opponent}")
+        st.header(f"Predict Performance for {player_name_input} against {opponent_abbr}")
 
         if st.button("Predict"):
             try:
                 # Prepare input data
-                X = prediction.prepare_input(player_name, opponent, season=season)
+                X = prediction.prepare_input(player_name_input, opponent_abbr, season=season)
 
                 # Make predictions using the pipelines
                 reg_pred = prediction.predict_regression(X, model_manager.regressor_pipeline)
@@ -169,14 +167,35 @@ def main():
                     'exceeds_threshold': bool(clf_pred)
                 }
 
-                # Extract context from KG
-                subgraph = extract_context_subgraph(model_manager.KG, player_id, opponent, model_manager)
-                player_team_abbr = model_manager.get_player_team(player_id)  # Updated line
+                # Retrieve player full name with team for uniqueness
+                player_row = players_df[players_df['id'] == player_id]
+                if not player_row.empty:
+                    player_full_name = player_row.iloc[0]['full_name']
+                    team_id = player_row.iloc[0]['team_id']
+                    team_row = all_teams[all_teams['id'] == team_id]
+                    if not team_row.empty:
+                        team_name = team_row.iloc[0]['full_name']
+                        unique_player_name = f"{player_full_name} ({team_name})"
+                    else:
+                        unique_player_name = player_full_name
+                else:
+                    unique_player_name = player_name_input
+
+                # Resolve opponent team name from abbreviation
+                opponent_team_name = model_manager.get_team_name_from_abbr(opponent_abbr)
+
+                # Extract context from KG with increased depth
+                subgraph = extract_context_subgraph(
+                    KG=model_manager.KG,
+                    player_name=unique_player_name,
+                    opponent_team_abbr=opponent_abbr,
+                    model_manager=model_manager,
+                    depth=3
+                )
 
                 context_info = {
-                    'Player': player_name,
-                    'Player_Team': player_team_abbr if player_team_abbr else 'Unknown',
-                    'Opponent': opponent,
+                    'Player': unique_player_name,
+                    'Opponent': opponent_team_name,
                     'Relationships': [
                         {
                             'source': u,
@@ -187,7 +206,7 @@ def main():
                     ]
                 }
 
-                explanation = model_manager.generate_explanation(player_name, opponent, prediction_result, context_info)
+                explanation = model_manager.generate_explanation(player_name_input, opponent_abbr, prediction_result, context_info)
                 st.subheader("Prediction Explanation")
                 st.write(explanation)
 
